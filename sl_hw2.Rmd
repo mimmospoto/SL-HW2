@@ -1,0 +1,272 @@
+---
+title: "SL-HW2"
+output:
+  html_document:
+    highlight: kate
+    toc: yes
+---
+
+```{r eval = FALSE}
+renv::restore()
+
+# or
+
+renv::install(
+  c(
+    "data.table",
+    "kernlab",
+    "doFuture",
+    "tidymodels",
+    "readr",
+    "RColorBrewer",
+    "ggplot2",
+    "plotly"
+  )
+)
+```
+
+```{r eval = FALSE}
+library(data.table)
+
+library(kernlab)
+# library(dimRed)
+
+library(parallel)
+library(doFuture)
+
+# library(caret)
+library(tidymodels)
+library(readr)
+
+library(RColorBrewer)
+library(ggplot2)
+library(plotly)
+```
+
+Load csv file
+
+```{r eval = FALSE}
+data <- data.table::fread("train4final_hw.csv")
+```
+
+Parallel
+
+```{r eval = FALSE}
+num_cores <- parallel::detectCores() - 1
+registerDoFuture()
+```
+
+Exclude `id`, `genre`, `tempo` columns from the dataset, and put aside the`tempo`
+
+```{r eval = FALSE}
+X <- as.matrix(data[,-c("id", "tempo", "genre")])
+tempo <- data$tempo
+```
+
+```{r eval = FALSE}
+audio_num <- 10
+audio <- matrix(X[audio_num,1:6840], nrow = 171, ncol = 40)
+
+image(x = 1:171, y = 1:40, z = audio, xlab = "Time instants", ylab = "Mel-Frequencies")
+```
+
+# Dimensionality reduction
+
+## Pre-PCA
+
+### ALT1 - Only keep columns related to the MEL coeffs, time statistics and signal statistics
+```{r eval = FALSE}
+mel_columns <- 1:6840
+time_columns <- 7012:7015
+signal_columns <- 7034:7039
+
+X_red <- X[, c(mel_columns, time_columns, signal_columns)]
+# X_red[, mel_columns] <- ifelse(abs(scale(X_red[, mel_columns])) < 0.1, 1, 0)
+```
+
+### ALT2 - Give less weight to the higher frequencies
+```{r}
+
+```
+
+## Linear PCA
+
+```{r eval = FALSE}
+pc <- prcomp(scale(X_red))
+
+cumul_variance <- pc$sdev / sum(pc$sdev)
+
+X_pca1 <- as.data.frame(pc$x[, 1:1000])
+X_pca1$tempo <- tempo
+```
+
+Check separation of the components
+
+```{r eval = FALSE}
+as.data.frame(X_pca1) |> 
+  ggplot(aes(PC1, PC2)) + 
+  geom_point(aes(colour = tempo)) + 
+  scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+## Kernel PCA
+
+Kernel PCA with Gaussian kernel function
+
+```{r eval = FALSE}
+X_kpca <- kpca(X_red,
+               kernel = "laplacedot",
+               kpar = list(sigma = 0.01),
+               th = 0.0002)
+
+X_kpca <- data.frame( pcv(X_kpca) )
+names(X_kpca) <- paste("PC", 1:ncol(X_kpca), sep = "")
+X_kpca$tempo <- tempo
+```
+
+Check separation of the components
+
+```{r eval = FALSE}
+X_kpca %>% 
+  ggplot(aes(PC1, PC2)) + 
+  geom_point(aes(colour = tempo)) + 
+  scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+```{r eval = FALSE}
+X_kpca %>% plot_ly(x = ~PC1, y = ~PC2, z = ~PC3, 
+                  type = "scatter3d", size = 1, 
+                  mode = "markers", color = tempo, colors = "RdYlBu")
+```
+
+# Modelling 
+
+## caret
+
+Split in training and testing
+
+```{r eval = FALSE}
+set.seed(123)
+train_idx <- caret::createDataPartition(y = X_kpca$tempo, p = 0.7, list = FALSE)
+training <- X_kpca[train_idx,]
+testing <- X_kpca[-train_idx,]
+```
+
+Use K-fold cross validation with `number`$= 5$ and use `SVM` to model
+
+```{r eval = FALSE}
+ctrl <- caret::trainControl(method = "cv", number = 5, savePredictions = T)
+```
+
+```{r eval = FALSE}
+# cl <- makeCluster(max(4, num_cores), type = "FORK")
+model <- caret::train(tempo ~ ., data = X_kpca, method = "svmLinear", trControl = ctrl)
+# stopCluster(cl)
+```
+
+## tidymodels
+
+```{r eval = FALSE}
+data_to_model <- tibble(X_red)
+data_to_model$tempo <- tempo
+```
+
+Steps
+
+1.  Split data in 70% Training and 30% Testing with stratified sampling
+
+2.  Pick model
+
+3.  Grid search to find best parameters using k-Fold Cross Validation
+
+4.  Fit with the best parameters and compute RMSE
+
+Training/testing
+
+```{r eval = FALSE}
+set.seed(123)
+tr_te_split <- data_to_model %>% initial_split(prop = 0.7, strata = tempo)
+
+training <- training(tr_te_split)
+testing <- testing(tr_te_split)
+```
+
+### SVM RBF
+
+<https://www.tidymodels.org/start/tuning/>
+
+```{r eval = FALSE}
+# model
+svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("kernlab")
+
+# fitting workflow
+svm_rbf_wf <- workflow() %>%
+  add_model(svm_rbf_spec) %>%
+  add_formula(tempo ~ .)
+
+# parallel computing
+cl <- makeCluster(num_cores)
+plan(cluster, workers = cl)
+
+# construct a 5x5 grid of sensible values
+# of cost and sigma to check
+svm_rbf_grid <- grid_regular(cost(), rbf_sigma(), levels = 5)
+
+# folds for cross validation
+folds <- vfold_cv(training)
+
+# fit for each set of folds
+# for all parameters in the grid
+svm_rbf_res <- svm_rbf_wf %>%
+  tune_grid(resamples = folds,
+            grid = svm_rbf_grid)
+```
+
+Compare the parameters
+
+```{r eval = FALSE}
+svm_rbf_res %>%
+  collect_metrics() %>%
+  mutate(cost = factor(cost)) %>%
+  ggplot(aes(rbf_sigma, mean, color = cost)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+```
+
+Fit with the best parameters
+<https://tune.tidymodels.org/reference/last_fit.html>
+
+```{r eval = FALSE}
+best_svm <- svm_rbf_res %>% select_best("rmse")
+
+svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
+
+svm_rbf_fit <- svm_rbf_wf_final %>% last_fit(tr_te_split) 
+stopCluster(cl)
+```
+
+Final RMSE
+
+```{r eval = FALSE}
+svm_rbf_fit %>% 
+  collect_metrics() %>% 
+  filter(.metric == "rmse") %>%
+  select(.estimate) %>%
+  deframe %>%
+  paste("RMSE =", .) %>%
+  cat()
+```
+
+Save model
+<https://community.rstudio.com/t/saving-a-model-fit-with-tidymodels/114839>
+
+```{r eval = FALSE}
+svm_rbf_fit %>% 
+  extract_workflow() %>% 
+  readr::write_rds("svm_rbf.rds")
+```
