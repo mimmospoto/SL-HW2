@@ -64,10 +64,27 @@ tempo <- data$tempo
 ```
 
 ```{r eval = FALSE}
-audio_num <- 10
-audio <- matrix(X[audio_num,1:6840], nrow = 171, ncol = 40)
+audio_num <- 2
+audio <- matrix(X[audio_num,1:6840], nrow = 171, ncol = 40) %>% scale()
 
-image(x = 1:171, y = 1:40, z = audio, xlab = "Time instants", ylab = "Mel-Frequencies")
+col_palette <- c("#FCFFA4FF", 
+                 "#F5DB4BFF", 
+                 "#FCAD12FF", 
+                 "#F78311FF", 
+                 "#E65D2FFF", 
+                 "#CB4149FF",
+                 "#A92E5EFF", 
+                 "#85216BFF", 
+                 "#60136EFF", 
+                 "#3A0963FF", 
+                 "#140B35FF", 
+                 "#000004FF")
+
+audio_smooth <- oce::matrixSmooth(audio, passes = 2)
+
+image(x = 1:171, y = 1:40, z = audio_smooth, 
+      xlab = "Time instants", ylab = "Mel-Frequencies",
+      col = col_palette)
 ```
 
 # Dimensionality reduction
@@ -84,9 +101,29 @@ X_red <- X[, c(mel_columns, time_columns, signal_columns)]
 # X_red[, mel_columns] <- ifelse(abs(scale(X_red[, mel_columns])) < 0.1, 1, 0)
 ```
 
-### ALT2 - Give less weight to the higher frequencies
-```{r}
+### ALT2 - Smooth the MEL coeffs
+```{r eval = FALSE}
+smoothRow <- function(row, nrow, ncol, passes){
+  matrix(row, nrow = nrow, ncol = ncol) %>%
+    scale() %>%
+    t() %>%
+    oce::matrixSmooth(., passes = passes) %>%
+    ramify::flatten(., across = "rows") %>%
+    return()
+}
 
+mel_columns <- 1:6840
+time_columns <- 7012:7015
+signal_columns <- 7034:7039
+
+X_red <- X[, c(mel_columns, time_columns, signal_columns)]
+X_red[, mel_columns] <- X_red[, mel_columns] %>% 
+  apply(MARGIN = 1, FUN = function(row) smoothRow(row, nrow = 171, ncol = 40, passes = 2)) %>% 
+  t()
+
+# image(x = 1:171, y = 1:40, z = matrix(X_red[2, mel_columns], nrow = 171, ncol = 40), 
+#       xlab = "Time instants", ylab = "Mel-Frequencies",
+#       col = col_palette)
 ```
 
 ## Linear PCA
@@ -115,9 +152,9 @@ Kernel PCA with Gaussian kernel function
 
 ```{r eval = FALSE}
 X_kpca <- kpca(X_red,
-               kernel = "laplacedot",
+               kernel = "rbfdot",
                kpar = list(sigma = 0.01),
-               th = 0.0002)
+               features = 100)
 
 X_kpca <- data.frame( pcv(X_kpca) )
 names(X_kpca) <- paste("PC", 1:ncol(X_kpca), sep = "")
@@ -214,8 +251,8 @@ plan(cluster, workers = cl)
 # of cost and sigma to check
 svm_rbf_grid <- grid_regular(cost(), rbf_sigma(), levels = 5)
 
-# folds for cross validation
-folds <- vfold_cv(training)
+# 10 folds for cross validation
+folds <- vfold_cv(training, v = 10, strata = tempo)
 
 # fit for each set of folds
 # for all parameters in the grid
@@ -262,6 +299,10 @@ svm_rbf_fit %>%
   cat()
 ```
 
+```{r eval = FALSE}
+svm_rbf_fit$.predictions
+```
+
 Save model
 <https://community.rstudio.com/t/saving-a-model-fit-with-tidymodels/114839>
 
@@ -269,4 +310,78 @@ Save model
 svm_rbf_fit %>% 
   extract_workflow() %>% 
   readr::write_rds("svm_rbf.rds")
+```
+
+### Random Forest
+
+```{r eval = FALSE}
+# model
+rf_spec <- rand_forest(mtry = tune(), trees = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("ranger")
+
+# fitting workflow
+rf_wf <- workflow() %>%
+  add_model(rf_spec) %>%
+  add_formula(tempo ~ .)
+
+# parallel computing
+cl <- makeCluster(num_cores)
+plan(cluster, workers = cl)
+
+num_features <- data_to_model[[1]] %>% ncol()
+
+# construct a grid of values
+# of mtry and trees to check
+rf_grid <- expand.grid(
+          mtry =  floor(num_features * c(0.1, 0.2, 0.5, 0.99)), 
+          trees = c(200, 500, 1000, 2000)
+        )
+
+# 10 folds for cross validation
+folds <- vfold_cv(training, v = 10, strata = tempo)
+
+# fit for each set of folds
+# for all parameters in the grid
+rf_res <- rf_wf %>%
+  tune_grid(resamples = folds,
+            grid = rf_grid)
+```
+
+Compare the parameters
+
+```{r eval = FALSE}
+rf_res %>%
+  collect_metrics() %>%
+  mutate(mtry = factor(mtry)) %>%
+  ggplot(aes(trees, mean, color = mtree)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+```
+
+Fit with the best parameters
+<https://tune.tidymodels.org/reference/last_fit.html>
+
+```{r eval = FALSE}
+best_rf <- rf_res %>% select_best("rmse")
+
+rf_wf_final <- rf_wf %>% finalize_workflow(best_rf)
+
+rf_fit <- rf_wf_final %>% last_fit(tr_te_split) 
+stopCluster(cl)
+```
+
+Final RMSE
+
+```{r eval = FALSE}
+rf_fit %>% 
+  collect_metrics() %>% 
+  filter(.metric == "rmse") %>%
+  select(.estimate) %>%
+  deframe %>%
+  paste("RMSE =", .) %>%
+  cat()
 ```
