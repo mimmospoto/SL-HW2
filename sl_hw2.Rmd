@@ -25,7 +25,7 @@ renv::install(
 )
 ```
 
-```{r eval = FALSE}
+```{r echo = FALSE}
 library(data.table)
 
 library(kernlab)
@@ -45,7 +45,7 @@ library(plotly)
 
 Load csv file
 
-```{r eval = FALSE}
+```{r}
 data <- data.table::fread("train4final_hw.csv")
 ```
 
@@ -56,152 +56,206 @@ num_cores <- parallel::detectCores() - 1
 registerDoFuture()
 ```
 
-Exclude `id`, `genre`, `tempo` columns from the dataset, and put aside the`tempo`
+# EDA
 
-```{r eval = FALSE}
-X <- as.matrix(data[,-c("id", "tempo", "genre")])
-tempo <- data$tempo
+## Which features are most (linearly) correlated to tempo
+```{r}
+cor(data[, -c("tempo", "id")], y = data$tempo) %>% 
+    tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
+    mutate("abs_corr" = abs(corr), feat) %>%
+    arrange(desc(abs_corr)) %>%
+    head(1000) %>%
+    select(feat, abs_corr) %>%
+    ggplot() +
+      aes(x = abs_corr, y = reorder(feat, abs_corr)) +
+      geom_col(position=position_dodge(), width = 0.8) +
+      theme(axis.text=element_text(size=5))
 ```
 
-```{r eval = FALSE}
-audio_num <- 2
-audio <- matrix(X[audio_num,1:6840], nrow = 171, ncol = 40) %>% scale()
-
-col_palette <- c("#FCFFA4FF", 
-                 "#F5DB4BFF", 
-                 "#FCAD12FF", 
-                 "#F78311FF", 
-                 "#E65D2FFF", 
-                 "#CB4149FF",
-                 "#A92E5EFF", 
-                 "#85216BFF", 
-                 "#60136EFF", 
-                 "#3A0963FF", 
-                 "#140B35FF", 
-                 "#000004FF")
-
-audio_smooth <- oce::matrixSmooth(audio, passes = 2)
-
-image(x = 1:171, y = 1:40, z = audio_smooth, 
-      xlab = "Time instants", ylab = "Mel-Frequencies",
-      col = col_palette)
+## Which not MEL feature are most (linearly) correlated to tempo
+```{r}
+cor(data[, -c(1:6840)], y = data$tempo) %>%
+    tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
+    filter(feat != "tempo" & feat != "id") %>%
+    mutate("abs_corr" = abs(corr), feat) %>%
+    arrange(desc(abs_corr)) %>%
+    select(feat, abs_corr) %>%
+    head(50) %>%
+    ggplot() +
+      aes(x = abs_corr, y = reorder(feat, abs_corr)) +
+      geom_col(position=position_dodge(), width = 0.8) +
+      theme(axis.text=element_text(size=5))
 ```
+
+## Which features are most (linearly) correlated to the frequency median
+```{r}
+cor(data[, -c(1:7011)], y = data$freq.M) %>%
+    tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
+    filter(feat != "freq.M" & feat != "id") %>%
+    mutate("abs_corr" = abs(corr), feat) %>%
+    arrange(desc(abs_corr)) %>%
+    select(feat, abs_corr) %>%
+    head(50) %>%
+    ggplot() +
+      aes(x = abs_corr, y = reorder(feat, abs_corr)) +
+      geom_col(position=position_dodge(), width = 0.8) +
+      theme(axis.text=element_text(size=5))
+```
+
+```{r}
+data %>%
+  as_tibble() %>%
+  ggplot() +
+    aes(x = tempo, y = genre) +
+    geom_point() +
+    scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+<!-- ```{r eval = FALSE} -->
+<!-- audio_num <- 2 -->
+<!-- audio <- matrix(X[audio_num,1:6840], nrow = 171, ncol = 40) %>% scale() -->
+
+<!-- col_palette <- c("#FCFFA4FF",  -->
+<!--                  "#F5DB4BFF",  -->
+<!--                  "#FCAD12FF",  -->
+<!--                  "#F78311FF",  -->
+<!--                  "#E65D2FFF",  -->
+<!--                  "#CB4149FF", -->
+<!--                  "#A92E5EFF",  -->
+<!--                  "#85216BFF",  -->
+<!--                  "#60136EFF",  -->
+<!--                  "#3A0963FF",  -->
+<!--                  "#140B35FF",  -->
+<!--                  "#000004FF") -->
+
+<!-- audio_smooth <- oce::matrixSmooth(audio, passes = 2) -->
+
+<!-- image(x = 1:171, y = 1:40, z = audio_smooth,  -->
+<!--       xlab = "Time instants", ylab = "Mel-Frequencies", -->
+<!--       col = col_palette) -->
+<!-- ``` -->
+
 
 # Dimensionality reduction
 
-## Pre-PCA
+Exclude `id`, `genre`, `tempo` columns from the dataset, and put aside the`tempo`
 
-### ALT1 - Only keep columns related to the MEL coeffs, time statistics and signal statistics
 ```{r eval = FALSE}
-mel_columns <- 1:6840
-time_columns <- 7012:7015
-signal_columns <- 7034:7039
-
-X_red <- X[, c(mel_columns, time_columns, signal_columns)]
-# X_red[, mel_columns] <- ifelse(abs(scale(X_red[, mel_columns])) < 0.1, 1, 0)
+X  <- data[,-c("id", "tempo", "genre")]
+tempo <- data$tempo
 ```
 
-### ALT2 - Smooth the MEL coeffs
-```{r eval = FALSE}
-smoothRow <- function(row, nrow, ncol, passes){
-  matrix(row, nrow = nrow, ncol = ncol) %>%
-    scale() %>%
-    t() %>%
-    oce::matrixSmooth(., passes = passes) %>%
-    ramify::flatten(., across = "rows") %>%
-    return()
-}
 
-mel_columns <- 1:6840
-time_columns <- 7012:7015
-signal_columns <- 7034:7039
+<!-- ## Pre-PCA -->
 
-X_red <- X[, c(mel_columns, time_columns, signal_columns)]
-X_red[, mel_columns] <- X_red[, mel_columns] %>% 
-  apply(MARGIN = 1, FUN = function(row) smoothRow(row, nrow = 171, ncol = 40, passes = 2)) %>% 
-  t()
+<!-- ### ALT1 - Only keep columns related to the MEL coeffs, time statistics and signal statistics -->
+<!-- ```{r eval = FALSE} -->
+<!-- mel_columns <- 1:6840 -->
+<!-- time_columns <- 7012:7015 -->
+<!-- signal_columns <- 7034:7039 -->
 
-# image(x = 1:171, y = 1:40, z = matrix(X_red[2, mel_columns], nrow = 171, ncol = 40), 
-#       xlab = "Time instants", ylab = "Mel-Frequencies",
-#       col = col_palette)
-```
+<!-- X_red <- X[, c(mel_columns, time_columns, signal_columns)] -->
+<!-- ``` -->
 
-## Linear PCA
+<!-- ### ALT2 - Smooth the MEL coeffs -->
+<!-- ```{r eval = FALSE} -->
+<!-- smoothRow <- function(row, nrow, ncol, passes){ -->
+<!--   matrix(row, nrow = nrow, ncol = ncol) %>% -->
+<!--     scale() %>% -->
+<!--     t() %>% -->
+<!--     oce::matrixSmooth(., passes = passes) %>% -->
+<!--     ramify::flatten(., across = "rows") %>% -->
+<!--     return() -->
+<!-- } -->
 
-```{r eval = FALSE}
-pc <- prcomp(scale(X_red))
+<!-- mel_columns <- 1:6840 -->
+<!-- time_columns <- 7012:7015 -->
+<!-- signal_columns <- 7034:7039 -->
 
-cumul_variance <- pc$sdev / sum(pc$sdev)
+<!-- X_red <- X[, c(mel_columns, time_columns, signal_columns)] -->
+<!-- X_red[, mel_columns] <- X_red[, mel_columns] %>%  -->
+<!--   apply(MARGIN = 1, FUN = function(row) smoothRow(row, nrow = 171, ncol = 40, passes = 2)) %>%  -->
+<!--   t() -->
 
-X_pca1 <- as.data.frame(pc$x[, 1:1000])
-X_pca1$tempo <- tempo
-```
+<!-- # image(x = 1:171, y = 1:40, z = matrix(X_red[2, mel_columns], nrow = 171, ncol = 40),  -->
+<!-- #       xlab = "Time instants", ylab = "Mel-Frequencies", -->
+<!-- #       col = col_palette) -->
+<!-- ``` -->
 
-Check separation of the components
-
-```{r eval = FALSE}
-as.data.frame(X_pca1) |> 
-  ggplot(aes(PC1, PC2)) + 
-  geom_point(aes(colour = tempo)) + 
-  scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
-```
-
-## Kernel PCA
-
-Kernel PCA with Gaussian kernel function
+## Linear PCA of all MEL coefficients
 
 ```{r eval = FALSE}
-X_kpca <- kpca(X_red,
-               kernel = "rbfdot",
-               kpar = list(sigma = 0.01),
-               features = 100)
+# X_kpca_mel <- X[, 1:6840] %>%
+#   scale() %>%
+#   kpca(x = .,
+#        kernel = "laplacedot",
+#        kpar = list(sigma = 0.00001),
+#        features = 100) %>%
+#   pcv() %>%
+#   as.data.frame()
 
-X_kpca <- data.frame( pcv(X_kpca) )
-names(X_kpca) <- paste("PC", 1:ncol(X_kpca), sep = "")
-X_kpca$tempo <- tempo
+pc <- X[, 1:6840] %>%
+  prcomp(center = TRUE, scale = TRUE)
+
+X_pca_mel <- pc$x[, 1:50] %>% as.data.frame()
+  
+colnames(X_pca_mel) <- paste("pc_mel", 1:ncol(X_pca_mel), sep = "")
 ```
 
 Check separation of the components
 
 ```{r eval = FALSE}
-X_kpca %>% 
-  ggplot(aes(PC1, PC2)) + 
+X_pca_mel %>% 
+  ggplot(aes(pc_mel3, pc_mel5)) + 
   geom_point(aes(colour = tempo)) + 
   scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
 
+## Kernel PCA of all dominant frequencies and frequency related statistics
+
 ```{r eval = FALSE}
-X_kpca %>% plot_ly(x = ~PC1, y = ~PC2, z = ~PC3, 
-                  type = "scatter3d", size = 1, 
-                  mode = "markers", color = tempo, colors = "RdYlBu")
+X_kpca_freq <- X[, c(6841:7011, 7016:7032, 7034:7039)] %>%
+  scale() %>%
+  kpca(x = .,
+       kernel = "rbfdot",
+       kpar = list(sigma = 0.3),
+       features = 10) %>%
+  pcv() %>%
+  as.data.frame()
+
+colnames(X_kpca_freq) <- paste("pc_freq", 1:ncol(X_kpca_freq), sep = "")
+```
+
+Check separation of the components
+
+```{r eval = FALSE}
+X_kpca_freq %>%
+  ggplot(aes(pc_freq1, pc_freq2)) +
+  geom_point(aes(colour = tempo)) +
+  scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+```{r eval = FALSE}
+X_kpca_freq %>% plot_ly(
+  x = ~ pc_freq1,
+  y = ~ pc_freq2,
+  z = ~ pc_freq3,
+  type = "scatter3d",
+  size = 1,
+  mode = "markers",
+  color = tempo,
+  colors = "RdYlBu"
+)
+```
+
+## Group everything in final dataset
+
+We kept everything except for the `time` columns in the original dataset
+```{r eval = FALSE}
+X_red <- cbind(X_pca_mel, X_kpca_freq)
 ```
 
 # Modelling 
-
-## caret
-
-Split in training and testing
-
-```{r eval = FALSE}
-set.seed(123)
-train_idx <- caret::createDataPartition(y = X_kpca$tempo, p = 0.7, list = FALSE)
-training <- X_kpca[train_idx,]
-testing <- X_kpca[-train_idx,]
-```
-
-Use K-fold cross validation with `number`$= 5$ and use `SVM` to model
-
-```{r eval = FALSE}
-ctrl <- caret::trainControl(method = "cv", number = 5, savePredictions = T)
-```
-
-```{r eval = FALSE}
-# cl <- makeCluster(max(4, num_cores), type = "FORK")
-model <- caret::train(tempo ~ ., data = X_kpca, method = "svmLinear", trControl = ctrl)
-# stopCluster(cl)
-```
-
-## tidymodels
 
 ```{r eval = FALSE}
 data_to_model <- tibble(X_red)
@@ -251,8 +305,8 @@ plan(cluster, workers = cl)
 # of cost and sigma to check
 svm_rbf_grid <- grid_regular(cost(), rbf_sigma(), levels = 5)
 
-# 10 folds for cross validation
-folds <- vfold_cv(training, v = 10, strata = tempo)
+# 5 folds for cross validation
+folds <- vfold_cv(training, v = 5, strata = tempo)
 
 # fit for each set of folds
 # for all parameters in the grid
