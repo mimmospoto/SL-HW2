@@ -6,7 +6,7 @@ output:
     toc: yes
 ---
 
-```{r eval = FALSE}
+```{r Install libraries, eval = FALSE}
 renv::restore()
 
 # or
@@ -25,33 +25,31 @@ renv::install(
 )
 ```
 
-```{r echo = FALSE}
-library(data.table)
+```{r Load libraries}
+suppressMessages(require(data.table, quietly = T))
 
-library(kernlab)
-# library(dimRed)
+suppressMessages(require(kernlab, quietly = T))
 
-library(parallel)
-library(doFuture)
+suppressMessages(require(parallel, quietly = T))
+suppressMessages(require(doFuture, quietly = T))
 
-# library(caret)
-library(tidymodels)
-library(readr)
+suppressMessages(require(tidymodels, quietly = T))
+suppressMessages(require(readr, quietly = T))
 
-library(RColorBrewer)
-library(ggplot2)
-library(plotly)
+suppressMessages(require(RColorBrewer, quietly = T))
+suppressMessages(require(ggplot2, quietly = T))
+suppressMessages(require(plotly, quietly = T))
 ```
 
 Load csv file
 
-```{r}
+```{r Load csv}
 data <- data.table::fread("train4final_hw.csv")
 ```
 
 Parallel
 
-```{r eval = FALSE}
+```{r Parallel initialization, eval = FALSE}
 num_cores <- parallel::detectCores() - 1
 registerDoFuture()
 ```
@@ -59,7 +57,7 @@ registerDoFuture()
 # EDA
 
 ## Which features are most (linearly) correlated to tempo
-```{r}
+```{r Correlation to tempo, warnings = F}
 cor(data[, -c("tempo", "id")], y = data$tempo) %>% 
     tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
     mutate("abs_corr" = abs(corr), feat) %>%
@@ -73,7 +71,7 @@ cor(data[, -c("tempo", "id")], y = data$tempo) %>%
 ```
 
 ## Which not MEL feature are most (linearly) correlated to tempo
-```{r}
+```{r Correlation of MEL to tempo, warnings = F}
 cor(data[, -c(1:6840)], y = data$tempo) %>%
     tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
     filter(feat != "tempo" & feat != "id") %>%
@@ -88,7 +86,7 @@ cor(data[, -c(1:6840)], y = data$tempo) %>%
 ```
 
 ## Which features are most (linearly) correlated to the frequency median
-```{r}
+```{r Correlation to frequency median, warnings = F}
 cor(data[, -c(1:7011)], y = data$freq.M) %>%
     tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
     filter(feat != "freq.M" & feat != "id") %>%
@@ -102,11 +100,11 @@ cor(data[, -c(1:7011)], y = data$freq.M) %>%
       theme(axis.text=element_text(size=5))
 ```
 
-```{r}
+```{r Tempo vs genre}
 data %>%
   as_tibble() %>%
   ggplot() +
-    aes(x = tempo, y = genre) +
+    aes(x = genre, y = tempo) +
     geom_point() +
     scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
@@ -138,10 +136,11 @@ data %>%
 
 # Dimensionality reduction
 
-Exclude `id`, `genre`, `tempo` columns from the dataset, and put aside the`tempo`
+Exclude `id` and `tempo` columns from the dataset, and put aside the`tempo`
 
-```{r eval = FALSE}
-X  <- data[,-c("id", "tempo", "genre")]
+```{r Starting data matrix, eval = FALSE}
+# X  <- data[,-c("id", "tempo", "genre")]
+X  <- data[,-c("id", "tempo")]
 tempo <- data$tempo
 ```
 
@@ -184,7 +183,7 @@ tempo <- data$tempo
 
 ## Linear PCA of all MEL coefficients
 
-```{r eval = FALSE}
+```{r PCA, eval = FALSE}
 # X_kpca_mel <- X[, 1:6840] %>%
 #   scale() %>%
 #   kpca(x = .,
@@ -204,7 +203,7 @@ colnames(X_pca_mel) <- paste("pc_mel", 1:ncol(X_pca_mel), sep = "")
 
 Check separation of the components
 
-```{r eval = FALSE}
+```{r Separation of PCA components, eval = FALSE}
 X_pca_mel %>% 
   ggplot(aes(pc_mel3, pc_mel5)) + 
   geom_point(aes(colour = tempo)) + 
@@ -213,13 +212,13 @@ X_pca_mel %>%
 
 ## Kernel PCA of all dominant frequencies and frequency related statistics
 
-```{r eval = FALSE}
+```{r KPCA, eval = FALSE}
 X_kpca_freq <- X[, c(6841:7011, 7016:7032, 7034:7039)] %>%
   scale() %>%
   kpca(x = .,
        kernel = "rbfdot",
        kpar = list(sigma = 0.3),
-       features = 10) %>%
+       features = 20) %>%
   pcv() %>%
   as.data.frame()
 
@@ -228,14 +227,14 @@ colnames(X_kpca_freq) <- paste("pc_freq", 1:ncol(X_kpca_freq), sep = "")
 
 Check separation of the components
 
-```{r eval = FALSE}
+```{r Separation of KPCA components, eval = FALSE}
 X_kpca_freq %>%
   ggplot(aes(pc_freq1, pc_freq2)) +
   geom_point(aes(colour = tempo)) +
   scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
 
-```{r eval = FALSE}
+```{r Separation of components, eval = F}
 X_kpca_freq %>% plot_ly(
   x = ~ pc_freq1,
   y = ~ pc_freq2,
@@ -251,13 +250,13 @@ X_kpca_freq %>% plot_ly(
 ## Group everything in final dataset
 
 We kept everything except for the `time` columns in the original dataset
-```{r eval = FALSE}
-X_red <- cbind(X_pca_mel, X_kpca_freq)
+```{r Bind all data, eval = FALSE}
+X_red <- cbind(X_pca_mel, X_kpca_freq, X[, "genre"])
 ```
 
 # Modelling 
 
-```{r eval = FALSE}
+```{r Final dataset, eval = FALSE}
 data_to_model <- tibble(X_red)
 data_to_model$tempo <- tempo
 ```
@@ -274,7 +273,7 @@ Steps
 
 Training/testing
 
-```{r eval = FALSE}
+```{r Training/testing, eval = FALSE}
 set.seed(123)
 tr_te_split <- data_to_model %>% initial_split(prop = 0.7, strata = tempo)
 
@@ -286,7 +285,7 @@ testing <- testing(tr_te_split)
 
 <https://www.tidymodels.org/start/tuning/>
 
-```{r eval = FALSE}
+```{r Tuning, eval = FALSE}
 # model
 svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
   set_mode("regression") %>%
@@ -317,7 +316,7 @@ svm_rbf_res <- svm_rbf_wf %>%
 
 Compare the parameters
 
-```{r eval = FALSE}
+```{r Compare tuned parameters, eval = FALSE}
 svm_rbf_res %>%
   collect_metrics() %>%
   mutate(cost = factor(cost)) %>%
@@ -332,7 +331,7 @@ svm_rbf_res %>%
 Fit with the best parameters
 <https://tune.tidymodels.org/reference/last_fit.html>
 
-```{r eval = FALSE}
+```{r Final fit, eval = FALSE}
 best_svm <- svm_rbf_res %>% select_best("rmse")
 
 svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
@@ -343,7 +342,7 @@ stopCluster(cl)
 
 Final RMSE
 
-```{r eval = FALSE}
+```{r Final RMSE, eval = FALSE}
 svm_rbf_fit %>% 
   collect_metrics() %>% 
   filter(.metric == "rmse") %>%
@@ -353,89 +352,124 @@ svm_rbf_fit %>%
   cat()
 ```
 
-```{r eval = FALSE}
+```{r Predictions, eval = FALSE}
 svm_rbf_fit$.predictions
+```
+
+```{r Predictions vs tempo, eval = FALSE}
+testing_rows <- svm_rbf_fit$.predictions[[1]]$.row
+
+svm_rbf_fit$.predictions[[1]] %>%
+  select(tempo, .pred, .row) %>%
+  as.data.frame() %>%
+  cbind(X[testing_rows, ]) %>%
+  ggplot() +
+    aes(tempo, .pred) +
+    aes(colour = sem) +
+    geom_point() + 
+    geom_smooth(alpha = 0.2) +
+    scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+Calculate residuals
+```{r Residuals, eval = FALSE}
+svm_rbf_residuals <- svm_rbf_fit$.predictions[[1]] %>%
+  mutate(res = tempo - .pred) %>%
+  select(res) %>%
+  as.vector() %>%
+  .$res
+```
+
+Check their correlation with the other variables
+```{r Correlation of residuals, eval = FALSE}
+cor(data_to_model[testing_rows, ], y = svm_rbf_residuals) %>% 
+    tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
+    filter(corr > -0.1 & corr < 0.1) %>%
+    ggplot() +
+      aes(x = corr, y = reorder(feat, corr)) +
+      geom_col(position=position_dodge(), width = 0.8) +
+      theme(axis.text=element_text(size=5))
 ```
 
 Save model
 <https://community.rstudio.com/t/saving-a-model-fit-with-tidymodels/114839>
 
-```{r eval = FALSE}
+```{r Save model, eval = FALSE}
 svm_rbf_fit %>% 
   extract_workflow() %>% 
   readr::write_rds("svm_rbf.rds")
 ```
 
-### Random Forest
+<!-- ### Random Forest -->
 
-```{r eval = FALSE}
-# model
-rf_spec <- rand_forest(mtry = tune(), trees = tune()) %>%
-  set_mode("regression") %>%
-  set_engine("ranger")
+<!-- ```{r eval = FALSE} -->
+<!-- # model -->
+<!-- rf_spec <- rand_forest(mtry = tune(), trees = tune()) %>% -->
+<!--   set_mode("regression") %>% -->
+<!--   set_engine("ranger") -->
 
-# fitting workflow
-rf_wf <- workflow() %>%
-  add_model(rf_spec) %>%
-  add_formula(tempo ~ .)
+<!-- # fitting workflow -->
+<!-- rf_wf <- workflow() %>% -->
+<!--   add_model(rf_spec) %>% -->
+<!--   add_formula(tempo ~ .) -->
 
-# parallel computing
-cl <- makeCluster(num_cores)
-plan(cluster, workers = cl)
+<!-- # parallel computing -->
+<!-- cl <- makeCluster(num_cores) -->
+<!-- plan(cluster, workers = cl) -->
 
-num_features <- data_to_model[[1]] %>% ncol()
+<!-- num_features <- data_to_model %>% ncol() -->
 
-# construct a grid of values
-# of mtry and trees to check
-rf_grid <- expand.grid(
-          mtry =  floor(num_features * c(0.1, 0.2, 0.5, 0.99)), 
-          trees = c(200, 500, 1000, 2000)
-        )
+<!-- # construct a grid of values -->
+<!-- # of mtry and trees to check -->
+<!-- rf_grid <- expand.grid( -->
+<!--           mtry =  floor(num_features * c(0.1, 0.2, 0.5, 0.99)),  -->
+<!--           trees = c(200, 500, 1000, 2000) -->
+<!--         ) -->
 
-# 10 folds for cross validation
-folds <- vfold_cv(training, v = 10, strata = tempo)
+<!-- # 10 folds for cross validation -->
+<!-- folds <- vfold_cv(training, v = 10, strata = tempo) -->
 
-# fit for each set of folds
-# for all parameters in the grid
-rf_res <- rf_wf %>%
-  tune_grid(resamples = folds,
-            grid = rf_grid)
-```
+<!-- # fit for each set of folds -->
+<!-- # for all parameters in the grid -->
+<!-- rf_res <- rf_wf %>% -->
+<!--   tune_grid(resamples = folds, -->
+<!--             grid = rf_grid) -->
+<!-- ``` -->
 
-Compare the parameters
+<!-- Compare the parameters -->
 
-```{r eval = FALSE}
-rf_res %>%
-  collect_metrics() %>%
-  mutate(mtry = factor(mtry)) %>%
-  ggplot(aes(trees, mean, color = mtree)) +
-  geom_line(size = 1.5, alpha = 0.6) +
-  geom_point(size = 2) +
-  facet_wrap(~ .metric, scales = "free", nrow = 2) +
-  scale_x_log10(labels = scales::label_number()) +
-  scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
-```
+<!-- ```{r eval = FALSE} -->
+<!-- rf_res %>% -->
+<!--   collect_metrics() %>% -->
+<!--   mutate(mtry = factor(mtry)) %>% -->
+<!--   ggplot(aes(trees, mean, color = mtry)) + -->
+<!--   geom_line(size = 1.5, alpha = 0.6) + -->
+<!--   geom_point(size = 2) + -->
+<!--   facet_wrap(~ .metric, scales = "free", nrow = 2) + -->
+<!--   scale_x_log10(labels = scales::label_number()) + -->
+<!--   scale_color_viridis_d(option = "plasma", begin = .9, end = 0) -->
+<!-- ``` -->
 
-Fit with the best parameters
-<https://tune.tidymodels.org/reference/last_fit.html>
+<!-- Fit with the best parameters -->
+<!-- <https://tune.tidymodels.org/reference/last_fit.html> -->
 
-```{r eval = FALSE}
-best_rf <- rf_res %>% select_best("rmse")
+<!-- ```{r eval = FALSE} -->
+<!-- best_rf <- rf_res %>% select_best("rmse") -->
 
-rf_wf_final <- rf_wf %>% finalize_workflow(best_rf)
+<!-- rf_wf_final <- rf_wf %>% finalize_workflow(best_rf) -->
 
-rf_fit <- rf_wf_final %>% last_fit(tr_te_split) 
-stopCluster(cl)
-```
+<!-- rf_fit <- rf_wf_final %>% last_fit(tr_te_split)  -->
+<!-- stopCluster(cl) -->
+<!-- ``` -->
 
-Final RMSE
+<!-- Final RMSE -->
 
-```{r eval = FALSE}
-rf_fit %>% 
-  collect_metrics() %>% 
-  filter(.metric == "rmse") %>%
-  select(.estimate) %>%
-  deframe %>%
-  paste("RMSE =", .) %>%
-  cat()
-```
+<!-- ```{r eval = FALSE} -->
+<!-- rf_fit %>%  -->
+<!--   collect_metrics() %>%  -->
+<!--   filter(.metric == "rmse") %>% -->
+<!--   select(.estimate) %>% -->
+<!--   deframe %>% -->
+<!--   paste("RMSE =", .) %>% -->
+<!--   cat() -->
+<!-- ``` -->
