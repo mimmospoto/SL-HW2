@@ -1,0 +1,103 @@
+---
+title: "SL-HW2 Kaggle"
+output:
+  html_document:
+    highlight: kate
+    toc: yes
+---
+
+```{r Load libraries}
+suppressMessages(require(data.table, quietly = T))
+
+suppressMessages(require(kernlab, quietly = T))
+
+suppressMessages(require(parallel, quietly = T))
+suppressMessages(require(doFuture, quietly = T))
+
+suppressMessages(require(tidymodels, quietly = T))
+suppressMessages(require(readr, quietly = T))
+
+suppressMessages(require(RColorBrewer, quietly = T))
+suppressMessages(require(ggplot2, quietly = T))
+suppressMessages(require(plotly, quietly = T))
+```
+
+Load csv file
+
+```{r Load csv}
+data <- data.table::fread("test4final_hw.csv")
+```
+
+Parallel
+
+```{r Parallel initialization}
+num_cores <- parallel::detectCores() - 1
+registerDoFuture()
+```
+
+# Dimensionality reduction
+
+Exclude `id` and `tempo` columns from the dataset
+
+```{r Starting data matrix}
+X  <- data[,-c("id")] %>% as.matrix()
+```
+
+
+## Linear PCA of all MEL coefficients
+
+```{r PCA}
+pc <- X[, 1:6840] %>%
+  prcomp(center = TRUE, scale = TRUE)
+
+X_pca_mel <- pc$x[, 1:50] %>% as.data.frame()
+  
+colnames(X_pca_mel) <- paste("pc_mel", 1:ncol(X_pca_mel), sep = "")
+```
+
+## Kernel PCA of all dominant frequencies and frequency related statistics
+
+```{r KPCA}
+X_kpca_freq <- X[, c(6841:7011, 7016:7032, 7034:7039)] %>%
+  scale() %>%
+  kpca(x = .,
+       kernel = "rbfdot",
+       kpar = list(sigma = 0.3),
+       features = 20) %>%
+  pcv() %>%
+  as.data.frame()
+
+colnames(X_kpca_freq) <- paste("pc_freq", 1:ncol(X_kpca_freq), sep = "")
+```
+
+## Group everything in final dataset
+
+We keep everything except for the `time` columns in the original dataset
+```{r Bind all data}
+X_red <- cbind(X_pca_mel, X_kpca_freq, genre = X[, "genre"])
+
+X_red[, paste("genre_", as.character(unique(X_red[, "genre"])), sep = "")] <- 0
+
+for (i in 1:nrow(X_red)){
+  genre <- X_red[i, "genre"]
+  X_red[i, paste("genre_", genre, sep = "")] <- 1
+}
+```
+
+# Modelling 
+
+```{r Final dataset}
+data_to_model <- tibble(X_red) %>% select(-genre)
+```
+
+## Import model
+```{r}
+svm_rbf_fit <- readr::read_rds("svm_rbf.rds")
+
+target <- svm_rbf_fit %>% predict(data_to_model)
+
+final_df <- bind_cols(id = data[, "id"], target) %>%
+  select(id, target = .pred)
+
+write_csv(final_df, file = "submission1_2022-05-31.csv")
+```

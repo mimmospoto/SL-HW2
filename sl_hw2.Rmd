@@ -238,7 +238,7 @@ X_kpca_freq %>% plot_ly(
 
 ## Group everything in final dataset
 
-We kept everything except for the `time` columns in the original dataset
+We keep everything except for the `time` columns in the original dataset
 ```{r Bind all data}
 X_red <- cbind(X_pca_mel, X_kpca_freq, genre = X[, "genre"])
 
@@ -353,6 +353,7 @@ svm_rbf_fit %>%
 ```{r Predictions}
 svm_rbf_fit$.predictions
 ```
+
 ## Predictions vs Observations
 ```{r Predictions vs tempo}
 testing_rows <- svm_rbf_fit$.predictions[[1]]$.row
@@ -363,31 +364,31 @@ svm_rbf_fit$.predictions[[1]] %>%
   cbind(X[testing_rows, ]) %>%
   ggplot() +
     aes(tempo, .pred) +
-    aes(colour = sem) +
+    aes(colour = genre) +
     geom_point() + 
     geom_smooth(alpha = 0.2) +
     scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
 
-## Residuals
-```{r Residuals}
-svm_rbf_residuals <- svm_rbf_fit$.predictions[[1]] %>%
-  mutate(res = tempo - .pred) %>%
-  select(res) %>%
-  as.vector() %>%
-  .$res
-```
+<!-- ## Residuals -->
+<!-- ```{r Residuals} -->
+<!-- svm_rbf_residuals <- svm_rbf_fit$.predictions[[1]] %>% -->
+<!--   mutate(res = tempo - .pred) %>% -->
+<!--   select(res) %>% -->
+<!--   as.vector() %>% -->
+<!--   .$res -->
+<!-- ``` -->
 
-### Check their correlation with the other variables
-```{r Correlation of residuals}
-cor(data_to_model[testing_rows, ], y = svm_rbf_residuals) %>% 
-    tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
-    filter(corr > -0.1 & corr < 0.1) %>%
-    ggplot() +
-      aes(x = corr, y = reorder(feat, corr)) +
-      geom_col(position=position_dodge(), width = 0.8) +
-      theme(axis.text=element_text(size=5))
-```
+<!-- ### Check their correlation with the other variables -->
+<!-- ```{r Correlation of residuals} -->
+<!-- cor(data_to_model[testing_rows, ], y = svm_rbf_residuals) %>%  -->
+<!--     tibble("corr" = as.vector(.), "feat" = rownames(.)) %>% -->
+<!--     filter(corr > -0.1 & corr < 0.1) %>% -->
+<!--     ggplot() + -->
+<!--       aes(x = corr, y = reorder(feat, corr)) + -->
+<!--       geom_col(position=position_dodge(), width = 0.8) + -->
+<!--       theme(axis.text=element_text(size=5)) -->
+<!-- ``` -->
 
 ##  Save model
 <https://community.rstudio.com/t/saving-a-model-fit-with-tidymodels/114839>
