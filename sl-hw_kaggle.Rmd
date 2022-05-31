@@ -84,8 +84,7 @@ for (i in 1:nrow(X_red)){
 }
 ```
 
-# Modelling 
-
+# Modelling
 ```{r Final dataset}
 data_to_model <- tibble(X_red) %>% select(-genre)
 ```

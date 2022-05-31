@@ -45,6 +45,10 @@ Load csv file
 
 ```{r Load csv}
 data <- data.table::fread("train4final_hw.csv")
+
+to_be_removed <- sample(1:nrow(data), 10)
+
+data <- data[-to_be_removed ,]
 ```
 
 Parallel
