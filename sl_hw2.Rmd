@@ -49,7 +49,7 @@ data <- data.table::fread("train4final_hw.csv")
 
 Parallel
 
-```{r Parallel initialization, eval = FALSE}
+```{r Parallel initialization}
 num_cores <- parallel::detectCores() - 1
 registerDoFuture()
 ```
@@ -109,54 +109,37 @@ data %>%
     scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
 
-<!-- ```{r eval = FALSE} -->
-<!-- audio_num <- 2 -->
-<!-- audio <- matrix(X[audio_num,1:6840], nrow = 171, ncol = 40) %>% scale() -->
+```{r eval = FALSE}
+audio_num <- 2
+audio <- data[audio_num, 1:6840] %>% 
+  as.matrix() %>% 
+  matrix(nrow = 171, ncol = 40) %>% 
+  scale()
 
-<!-- col_palette <- c("#FCFFA4FF",  -->
-<!--                  "#F5DB4BFF",  -->
-<!--                  "#FCAD12FF",  -->
-<!--                  "#F78311FF",  -->
-<!--                  "#E65D2FFF",  -->
-<!--                  "#CB4149FF", -->
-<!--                  "#A92E5EFF",  -->
-<!--                  "#85216BFF",  -->
-<!--                  "#60136EFF",  -->
-<!--                  "#3A0963FF",  -->
-<!--                  "#140B35FF",  -->
-<!--                  "#000004FF") -->
 
-<!-- audio_smooth <- oce::matrixSmooth(audio, passes = 2) -->
 
-<!-- image(x = 1:171, y = 1:40, z = audio_smooth,  -->
-<!--       xlab = "Time instants", ylab = "Mel-Frequencies", -->
-<!--       col = col_palette) -->
-<!-- ``` -->
+audio_smooth <- oce::matrixSmooth(audio, passes = 1)
+
+image(x = 1:171, y = 1:40, z = audio_smooth,
+      xlab = "Time instants", ylab = "Mel-Frequencies",
+      col = col_palette)
+```
 
 
 # Dimensionality reduction
 
 Exclude `id` and `tempo` columns from the dataset, and put aside the`tempo`
 
-```{r Starting data matrix, eval = FALSE}
+```{r Starting data matrix}
 # X  <- data[,-c("id", "tempo", "genre")]
-X  <- data[,-c("id", "tempo")]
+X  <- data[,-c("id", "tempo")] %>% as.matrix()
 tempo <- data$tempo
 ```
 
 
 <!-- ## Pre-PCA -->
 
-<!-- ### ALT1 - Only keep columns related to the MEL coeffs, time statistics and signal statistics -->
-<!-- ```{r eval = FALSE} -->
-<!-- mel_columns <- 1:6840 -->
-<!-- time_columns <- 7012:7015 -->
-<!-- signal_columns <- 7034:7039 -->
-
-<!-- X_red <- X[, c(mel_columns, time_columns, signal_columns)] -->
-<!-- ``` -->
-
-<!-- ### ALT2 - Smooth the MEL coeffs -->
+<!-- ### Smooth the MEL coeffs -->
 <!-- ```{r eval = FALSE} -->
 <!-- smoothRow <- function(row, nrow, ncol, passes){ -->
 <!--   matrix(row, nrow = nrow, ncol = ncol) %>% -->
@@ -167,23 +150,33 @@ tempo <- data$tempo
 <!--     return() -->
 <!-- } -->
 
-<!-- mel_columns <- 1:6840 -->
-<!-- time_columns <- 7012:7015 -->
-<!-- signal_columns <- 7034:7039 -->
+<!-- col_palette <- c("#FCFFA4FF", -->
+<!--                  "#F5DB4BFF", -->
+<!--                  "#FCAD12FF", -->
+<!--                  "#F78311FF", -->
+<!--                  "#E65D2FFF", -->
+<!--                  "#CB4149FF", -->
+<!--                  "#A92E5EFF", -->
+<!--                  "#85216BFF", -->
+<!--                  "#60136EFF", -->
+<!--                  "#3A0963FF", -->
+<!--                  "#140B35FF", -->
+<!--                  "#000004FF") -->
 
-<!-- X_red <- X[, c(mel_columns, time_columns, signal_columns)] -->
-<!-- X_red[, mel_columns] <- X_red[, mel_columns] %>%  -->
-<!--   apply(MARGIN = 1, FUN = function(row) smoothRow(row, nrow = 171, ncol = 40, passes = 2)) %>%  -->
+<!-- mel_columns <- 1:6840 -->
+
+<!-- X[, mel_columns] <- X[, mel_columns] %>% -->
+<!--   apply(MARGIN = 1, FUN = function(row) smoothRow(row, nrow = 171, ncol = 40, passes = 1)) %>% -->
 <!--   t() -->
 
-<!-- # image(x = 1:171, y = 1:40, z = matrix(X_red[2, mel_columns], nrow = 171, ncol = 40),  -->
-<!-- #       xlab = "Time instants", ylab = "Mel-Frequencies", -->
-<!-- #       col = col_palette) -->
+<!-- image(x = 1:171, y = 1:40, z = matrix(X[2, mel_columns], nrow = 171, ncol = 40), -->
+<!--       xlab = "Time instants", ylab = "Mel-Frequencies", -->
+<!--       col = col_palette) -->
 <!-- ``` -->
 
 ## Linear PCA of all MEL coefficients
 
-```{r PCA, eval = FALSE}
+```{r PCA}
 # X_kpca_mel <- X[, 1:6840] %>%
 #   scale() %>%
 #   kpca(x = .,
@@ -203,7 +196,7 @@ colnames(X_pca_mel) <- paste("pc_mel", 1:ncol(X_pca_mel), sep = "")
 
 Check separation of the components
 
-```{r Separation of PCA components, eval = FALSE}
+```{r Separation of PCA components}
 X_pca_mel %>% 
   ggplot(aes(pc_mel3, pc_mel5)) + 
   geom_point(aes(colour = tempo)) + 
@@ -212,7 +205,7 @@ X_pca_mel %>%
 
 ## Kernel PCA of all dominant frequencies and frequency related statistics
 
-```{r KPCA, eval = FALSE}
+```{r KPCA}
 X_kpca_freq <- X[, c(6841:7011, 7016:7032, 7034:7039)] %>%
   scale() %>%
   kpca(x = .,
@@ -227,7 +220,7 @@ colnames(X_kpca_freq) <- paste("pc_freq", 1:ncol(X_kpca_freq), sep = "")
 
 Check separation of the components
 
-```{r Separation of KPCA components, eval = FALSE}
+```{r Separation of KPCA components}
 X_kpca_freq %>%
   ggplot(aes(pc_freq1, pc_freq2)) +
   geom_point(aes(colour = tempo)) +
@@ -250,13 +243,13 @@ X_kpca_freq %>% plot_ly(
 ## Group everything in final dataset
 
 We kept everything except for the `time` columns in the original dataset
-```{r Bind all data, eval = FALSE}
+```{r Bind all data}
 X_red <- cbind(X_pca_mel, X_kpca_freq, X[, "genre"])
 ```
 
 # Modelling 
 
-```{r Final dataset, eval = FALSE}
+```{r Final dataset}
 data_to_model <- tibble(X_red)
 data_to_model$tempo <- tempo
 ```
@@ -271,9 +264,9 @@ Steps
 
 4.  Fit with the best parameters and compute RMSE
 
-Training/testing
+### Training/testing
 
-```{r Training/testing, eval = FALSE}
+```{r Training/testing}
 set.seed(123)
 tr_te_split <- data_to_model %>% initial_split(prop = 0.7, strata = tempo)
 
@@ -281,11 +274,13 @@ training <- training(tr_te_split)
 testing <- testing(tr_te_split)
 ```
 
-### SVM RBF
+## SVM RBF
+
+### Tuning
 
 <https://www.tidymodels.org/start/tuning/>
 
-```{r Tuning, eval = FALSE}
+```{r Tuning}
 # model
 svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
   set_mode("regression") %>%
@@ -314,9 +309,9 @@ svm_rbf_res <- svm_rbf_wf %>%
             grid = svm_rbf_grid)
 ```
 
-Compare the parameters
+## Compare the parameters
 
-```{r Compare tuned parameters, eval = FALSE}
+```{r Compare tuned parameters}
 svm_rbf_res %>%
   collect_metrics() %>%
   mutate(cost = factor(cost)) %>%
@@ -328,10 +323,10 @@ svm_rbf_res %>%
   scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
 ```
 
-Fit with the best parameters
+## Fit with the best parameters
 <https://tune.tidymodels.org/reference/last_fit.html>
 
-```{r Final fit, eval = FALSE}
+```{r Final fit}
 best_svm <- svm_rbf_res %>% select_best("rmse")
 
 svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
@@ -340,9 +335,9 @@ svm_rbf_fit <- svm_rbf_wf_final %>% last_fit(tr_te_split)
 stopCluster(cl)
 ```
 
-Final RMSE
+## Final RMSE
 
-```{r Final RMSE, eval = FALSE}
+```{r Final RMSE}
 svm_rbf_fit %>% 
   collect_metrics() %>% 
   filter(.metric == "rmse") %>%
@@ -352,11 +347,11 @@ svm_rbf_fit %>%
   cat()
 ```
 
-```{r Predictions, eval = FALSE}
+```{r Predictions}
 svm_rbf_fit$.predictions
 ```
-
-```{r Predictions vs tempo, eval = FALSE}
+## Predictions vs Observations
+```{r Predictions vs tempo}
 testing_rows <- svm_rbf_fit$.predictions[[1]]$.row
 
 svm_rbf_fit$.predictions[[1]] %>%
@@ -371,8 +366,8 @@ svm_rbf_fit$.predictions[[1]] %>%
     scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
 
-Calculate residuals
-```{r Residuals, eval = FALSE}
+## Residuals
+```{r Residuals}
 svm_rbf_residuals <- svm_rbf_fit$.predictions[[1]] %>%
   mutate(res = tempo - .pred) %>%
   select(res) %>%
@@ -380,8 +375,8 @@ svm_rbf_residuals <- svm_rbf_fit$.predictions[[1]] %>%
   .$res
 ```
 
-Check their correlation with the other variables
-```{r Correlation of residuals, eval = FALSE}
+### Check their correlation with the other variables
+```{r Correlation of residuals}
 cor(data_to_model[testing_rows, ], y = svm_rbf_residuals) %>% 
     tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
     filter(corr > -0.1 & corr < 0.1) %>%
@@ -391,7 +386,7 @@ cor(data_to_model[testing_rows, ], y = svm_rbf_residuals) %>%
       theme(axis.text=element_text(size=5))
 ```
 
-Save model
+##  Save model
 <https://community.rstudio.com/t/saving-a-model-fit-with-tidymodels/114839>
 
 ```{r Save model, eval = FALSE}
