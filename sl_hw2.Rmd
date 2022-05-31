@@ -109,23 +109,6 @@ data %>%
     scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
 
-```{r eval = FALSE}
-audio_num <- 2
-audio <- data[audio_num, 1:6840] %>% 
-  as.matrix() %>% 
-  matrix(nrow = 171, ncol = 40) %>% 
-  scale()
-
-
-
-audio_smooth <- oce::matrixSmooth(audio, passes = 1)
-
-image(x = 1:171, y = 1:40, z = audio_smooth,
-      xlab = "Time instants", ylab = "Mel-Frequencies",
-      col = col_palette)
-```
-
-
 # Dimensionality reduction
 
 Exclude `id` and `tempo` columns from the dataset, and put aside the`tempo`
@@ -174,18 +157,31 @@ tempo <- data$tempo
 <!--       col = col_palette) -->
 <!-- ``` -->
 
+<!-- ## Average of the MEL coefficients by column for each row -->
+<!-- ```{r MEL coeff average} -->
+<!-- avg_by_column <- function(row, nrow, ncol){ -->
+<!--   matrix(row, nrow = nrow, ncol = ncol) %>% -->
+<!--     apply(MARGIN = 2, FUN = mean) %>% -->
+<!--     return() -->
+<!-- } -->
+
+<!-- mel_columns <- 1:6840 -->
+<!-- X_avg_mel <- matrix(NA, nrow = nrow(X), ncol = 171)  -->
+
+<!-- X_avg_mel[, 1:171] <- X[, mel_columns] %>% -->
+<!--   apply(MARGIN = 1, FUN = function(row) avg_by_column(row, nrow = 40, ncol = 171)) -->
+
+<!-- pc <- X_avg_mel[, 1:171] %>% -->
+<!--   prcomp(center = TRUE, scale = TRUE) -->
+
+<!-- X_avg_mel <- pc$x[, 1:50] %>% as.data.frame() -->
+
+<!-- colnames(X_avg_mel) <- paste("pc_mel", 1:ncol(X_avg_mel), sep = "") -->
+<!-- ``` -->
+
 ## Linear PCA of all MEL coefficients
 
 ```{r PCA}
-# X_kpca_mel <- X[, 1:6840] %>%
-#   scale() %>%
-#   kpca(x = .,
-#        kernel = "laplacedot",
-#        kpar = list(sigma = 0.00001),
-#        features = 100) %>%
-#   pcv() %>%
-#   as.data.frame()
-
 pc <- X[, 1:6840] %>%
   prcomp(center = TRUE, scale = TRUE)
 
@@ -198,7 +194,7 @@ Check separation of the components
 
 ```{r Separation of PCA components}
 X_pca_mel %>% 
-  ggplot(aes(pc_mel3, pc_mel5)) + 
+  ggplot(aes(pc_mel3, pc_mel4)) + 
   geom_point(aes(colour = tempo)) + 
   scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
@@ -244,13 +240,20 @@ X_kpca_freq %>% plot_ly(
 
 We kept everything except for the `time` columns in the original dataset
 ```{r Bind all data}
-X_red <- cbind(X_pca_mel, X_kpca_freq, X[, "genre"])
+X_red <- cbind(X_pca_mel, X_kpca_freq, genre = X[, "genre"])
+
+X_red[, paste("genre_", as.character(unique(X_red[, "genre"])), sep = "")] <- 0
+
+for (i in 1:nrow(X_red)){
+  genre <- X_red[i, "genre"]
+  X_red[i, paste("genre_", genre, sep = "")] <- 1
+}
 ```
 
 # Modelling 
 
 ```{r Final dataset}
-data_to_model <- tibble(X_red)
+data_to_model <- tibble(X_red) %>% select(-genre)
 data_to_model$tempo <- tempo
 ```
 
