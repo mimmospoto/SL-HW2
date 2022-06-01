@@ -25,7 +25,7 @@ suppressMessages(require(plotly, quietly = T))
 Load csv file
 
 ```{r Load csv}
-data <- data.table::fread("test4final_hw.csv")
+data <- data.table::fread("data/test4final_hw.csv")
 ```
 
 Parallel
@@ -37,10 +37,10 @@ registerDoFuture()
 
 # Dimensionality reduction
 
-Exclude `id` and `tempo` columns from the dataset
+Exclude `id` columns from the dataset
 
 ```{r Starting data matrix}
-X  <- data[,-c("id")] %>% as.matrix()
+X  <- testing[,-c("id")] %>% as.matrix()
 ```
 
 
@@ -86,17 +86,24 @@ for (i in 1:nrow(X_red)){
 
 # Modelling
 ```{r Final dataset}
-data_to_model <- tibble(X_red) %>% select(-genre)
+testing <- tibble(X_red) %>% select(-genre)
 ```
 
 ## Import model
 ```{r}
-svm_rbf_fit <- readr::read_rds("svm_rbf.rds")
+model_date <- "20220601_121021"
 
-target <- svm_rbf_fit %>% predict(data_to_model)
+svm_rbf_fit <- paste("models/svm_rbf_", model_date, ".rds", sep = "") %>%
+  readr::read_rds(.)
+```
+
+## Export predictions
+```{r}
+target <- svm_rbf_fit %>% predict(testing)
 
 final_df <- bind_cols(id = data[, "id"], target) %>%
   select(id, target = .pred)
 
-write_csv(final_df, file = "submission1_2022-05-31.csv")
+paste("submissions/submission_", model_date, ".csv", sep = "") %>% 
+  write_csv(final_df, file = .)
 ```

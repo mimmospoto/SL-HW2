@@ -44,7 +44,7 @@ suppressMessages(require(plotly, quietly = T))
 Load csv file
 
 ```{r Load csv}
-data <- data.table::fread("train4final_hw.csv")
+data <- data.table::fread("data/train4final_hw.csv")
 
 set.seed(123)
 to_be_removed <- sample(1:nrow(data), 10)
@@ -246,7 +246,9 @@ X_kpca_freq %>% plot_ly(
 We keep everything except for the `time` columns in the original dataset
 ```{r Bind all data}
 X_red <- cbind(X_pca_mel, X_kpca_freq, genre = X[, "genre"])
+```
 
+```{r One-hot encoding of genre}
 X_red[, paste("genre_", as.character(unique(X_red[, "genre"])), sep = "")] <- 0
 
 for (i in 1:nrow(X_red)){
@@ -255,7 +257,7 @@ for (i in 1:nrow(X_red)){
 }
 ```
 
-# Modelling 
+# Initial Modelling (for us)
 
 ```{r Final dataset}
 data_to_model <- tibble(X_red) %>% select(-genre)
@@ -274,7 +276,7 @@ Steps
 
 ### Training/testing
 
-```{r Training/testing}
+```{r Initial Training/testing}
 set.seed(123)
 tr_te_split <- data_to_model %>% initial_split(prop = 0.7, strata = tempo)
 
@@ -288,7 +290,7 @@ testing <- testing(tr_te_split)
 
 <https://www.tidymodels.org/start/tuning/>
 
-```{r Tuning}
+```{r Initial Tuning}
 # model
 svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
   set_mode("regression") %>%
@@ -319,7 +321,7 @@ svm_rbf_res <- svm_rbf_wf %>%
 
 ## Compare the parameters
 
-```{r Compare tuned parameters}
+```{r Initial Compare tuned parameters}
 svm_rbf_res %>%
   collect_metrics() %>%
   mutate(cost = factor(cost)) %>%
@@ -334,7 +336,7 @@ svm_rbf_res %>%
 ## Fit with the best parameters
 <https://tune.tidymodels.org/reference/last_fit.html>
 
-```{r Final fit}
+```{r Initial Final fit}
 best_svm <- svm_rbf_res %>% select_best("rmse")
 
 svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
@@ -395,13 +397,79 @@ svm_rbf_fit$.predictions[[1]] %>%
 <!--       theme(axis.text=element_text(size=5)) -->
 <!-- ``` -->
 
+
+# Final Modelling (for Kaggle)
+
+## Tuning
+```{r Training for Kaggle}
+# train on full training dataset
+training <- data_to_model
+
+# model
+svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("kernlab")
+
+# fitting workflow
+svm_rbf_wf <- workflow() %>%
+  add_model(svm_rbf_spec) %>%
+  add_formula(tempo ~ .)
+
+# parallel computing
+cl <- makeCluster(num_cores)
+plan(cluster, workers = cl)
+
+# construct a 5x5 grid of sensible values
+# of cost and sigma to check
+svm_rbf_grid <- grid_regular(cost(), rbf_sigma(), levels = 5)
+
+# 5 folds for cross validation
+folds <- vfold_cv(training, v = 5, strata = tempo)
+
+# fit for each set of folds
+# for all parameters in the grid
+svm_rbf_res <- svm_rbf_wf %>%
+  tune_grid(resamples = folds,
+            grid = svm_rbf_grid)
+```
+
+## Compare the parameters
+
+```{r Compare tuned parameters for Kaggle}
+svm_rbf_res %>%
+  collect_metrics() %>%
+  mutate(cost = factor(cost)) %>%
+  ggplot(aes(rbf_sigma, mean, color = cost)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+```
+## Fit with the best parameters
+
+```{r Final fit for Kaggle}
+best_svm <- svm_rbf_res %>% select_best("rmse")
+
+svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
+
+svm_rbf_fit <- svm_rbf_wf_final %>% fit(training) 
+stopCluster(cl)
+```
+
 ##  Save model
 <https://community.rstudio.com/t/saving-a-model-fit-with-tidymodels/114839>
 
-```{r Save model, eval = FALSE}
+```{r Save model for Kaggle, eval = FALSE}
+current_time <- Sys.time() %>% format("%Y%m%d_%H%M%S")
+
+filename <- "models/svm_rbf" %>% 
+  paste(current_time, sep = "_") %>% 
+  paste(".rds", sep ="")
+
 svm_rbf_fit %>% 
   extract_workflow() %>% 
-  readr::write_rds("svm_rbf.rds")
+  readr::write_rds(filename)
 ```
 
 <!-- ### Random Forest -->
