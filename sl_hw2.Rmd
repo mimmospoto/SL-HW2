@@ -257,12 +257,12 @@ for (i in 1:nrow(X_red)){
 }
 ```
 
-# Initial Modelling (for us)
-
 ```{r Final dataset}
 data_to_model <- tibble(X_red) %>% select(-genre)
 data_to_model$tempo <- tempo
 ```
+
+# Initial Modelling (for us)
 
 Steps
 
@@ -319,7 +319,7 @@ svm_rbf_res <- svm_rbf_wf %>%
             grid = svm_rbf_grid)
 ```
 
-## Compare the parameters
+### Compare the parameters
 
 ```{r Initial Compare tuned parameters}
 svm_rbf_res %>%
@@ -333,7 +333,7 @@ svm_rbf_res %>%
   scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
 ```
 
-## Fit with the best parameters
+### Fit with the best parameters
 <https://tune.tidymodels.org/reference/last_fit.html>
 
 ```{r Initial Final fit}
@@ -345,7 +345,7 @@ svm_rbf_fit <- svm_rbf_wf_final %>% last_fit(tr_te_split)
 stopCluster(cl)
 ```
 
-## Final RMSE
+### Final RMSE
 
 ```{r Final RMSE}
 svm_rbf_fit %>% 
@@ -361,7 +361,7 @@ svm_rbf_fit %>%
 svm_rbf_fit$.predictions
 ```
 
-## Predictions vs Observations
+### Predictions vs Observations
 ```{r Predictions vs tempo}
 testing_rows <- svm_rbf_fit$.predictions[[1]]$.row
 
@@ -400,7 +400,7 @@ svm_rbf_fit$.predictions[[1]] %>%
 
 # Final Modelling (for Kaggle)
 
-## Tuning
+### Tuning
 ```{r Training for Kaggle}
 # train on full training dataset
 training <- data_to_model
@@ -421,9 +421,10 @@ plan(cluster, workers = cl)
 
 # construct a 5x5 grid of sensible values
 # of cost and sigma to check
-svm_rbf_grid <- grid_regular(cost(), rbf_sigma(), levels = 5)
+svm_rbf_grid <- grid_regular(cost(range = c(18, 23), trans = identity_trans()), 
+                             rbf_sigma(range = c(0.0045, 0.007), trans = identity_trans()), levels = 15)
 
-# 5 folds for cross validation
+# 10 folds for cross validation
 folds <- vfold_cv(training, v = 5, strata = tempo)
 
 # fit for each set of folds
@@ -433,20 +434,32 @@ svm_rbf_res <- svm_rbf_wf %>%
             grid = svm_rbf_grid)
 ```
 
-## Compare the parameters
+### Compare the parameters
 
 ```{r Compare tuned parameters for Kaggle}
 svm_rbf_res %>%
   collect_metrics() %>%
+  filter(.metric == "rmse") %>%
   mutate(cost = factor(cost)) %>%
   ggplot(aes(rbf_sigma, mean, color = cost)) +
   geom_line(size = 1.5, alpha = 0.6) +
   geom_point(size = 2) +
-  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  # facet_wrap(~ .metric, scales = "free", nrow = 2) +
   scale_x_log10(labels = scales::label_number()) +
   scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
 ```
-## Fit with the best parameters
+
+### Lowest RMSE from cross validation
+
+```{r Lowest RMSE from cross validation}
+svm_rbf_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  filter(mean == min(mean)) %>%
+  select(cost, rbf_sigma, .metric, mean, std_err)
+```
+
+### Fit with the best parameters
 
 ```{r Final fit for Kaggle}
 best_svm <- svm_rbf_res %>% select_best("rmse")
@@ -457,7 +470,7 @@ svm_rbf_fit <- svm_rbf_wf_final %>% fit(training)
 stopCluster(cl)
 ```
 
-##  Save model
+###  Save model
 <https://community.rstudio.com/t/saving-a-model-fit-with-tidymodels/114839>
 
 ```{r Save model for Kaggle, eval = FALSE}
@@ -465,11 +478,10 @@ current_time <- Sys.time() %>% format("%Y%m%d_%H%M%S")
 
 filename <- "models/svm_rbf" %>% 
   paste(current_time, sep = "_") %>% 
-  paste(".rds", sep ="")
+  paste(".rds", sep = "")
 
 svm_rbf_fit %>% 
-  extract_workflow() %>% 
-  readr::write_rds(filename)
+  readr::write_rds(file = filename)
 ```
 
 <!-- ### Random Forest -->

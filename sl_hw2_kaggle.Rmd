@@ -16,10 +16,6 @@ suppressMessages(require(doFuture, quietly = T))
 
 suppressMessages(require(tidymodels, quietly = T))
 suppressMessages(require(readr, quietly = T))
-
-suppressMessages(require(RColorBrewer, quietly = T))
-suppressMessages(require(ggplot2, quietly = T))
-suppressMessages(require(plotly, quietly = T))
 ```
 
 Load csv file
@@ -40,7 +36,7 @@ registerDoFuture()
 Exclude `id` columns from the dataset
 
 ```{r Starting data matrix}
-X  <- testing[,-c("id")] %>% as.matrix()
+X  <- data[,-c("id")] %>% as.matrix()
 ```
 
 
@@ -91,7 +87,7 @@ testing <- tibble(X_red) %>% select(-genre)
 
 ## Import model
 ```{r}
-model_date <- "20220601_121021"
+model_date <- "20220601_182832"
 
 svm_rbf_fit <- paste("models/svm_rbf_", model_date, ".rds", sep = "") %>%
   readr::read_rds(.)
