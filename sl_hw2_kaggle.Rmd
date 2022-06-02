@@ -46,7 +46,7 @@ X  <- data[,-c("id")] %>% as.matrix()
 pc <- X[, 1:6840] %>%
   prcomp(center = TRUE, scale = TRUE)
 
-X_pca_mel <- pc$x[, 1:50] %>% as.data.frame()
+X_pca_mel <- pc$x[, 1:20] %>% as.data.frame()
   
 colnames(X_pca_mel) <- paste("pc_mel", 1:ncol(X_pca_mel), sep = "")
 ```
@@ -59,7 +59,7 @@ X_kpca_freq <- X[, c(6841:7011, 7016:7032, 7034:7039)] %>%
   kpca(x = .,
        kernel = "rbfdot",
        kpar = list(sigma = 0.3),
-       features = 20) %>%
+       features = 5) %>%
   pcv() %>%
   as.data.frame()
 
@@ -87,7 +87,7 @@ testing <- tibble(X_red) %>% select(-genre)
 
 ## Import model
 ```{r}
-model_date <- "20220601_182832"
+model_date <- "20220602_124146"
 
 svm_rbf_fit <- paste("models/svm_rbf_", model_date, ".rds", sep = "") %>%
   readr::read_rds(.)

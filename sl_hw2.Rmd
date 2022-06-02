@@ -190,7 +190,7 @@ tempo <- data$tempo
 pc <- X[, 1:6840] %>%
   prcomp(center = TRUE, scale = TRUE)
 
-X_pca_mel <- pc$x[, 1:50] %>% as.data.frame()
+X_pca_mel <- pc$x[, 1:20] %>% as.data.frame()
   
 colnames(X_pca_mel) <- paste("pc_mel", 1:ncol(X_pca_mel), sep = "")
 ```
@@ -212,7 +212,7 @@ X_kpca_freq <- X[, c(6841:7011, 7016:7032, 7034:7039)] %>%
   kpca(x = .,
        kernel = "rbfdot",
        kpar = list(sigma = 0.3),
-       features = 20) %>%
+       features = 5) %>%
   pcv() %>%
   as.data.frame()
 
@@ -324,11 +324,12 @@ svm_rbf_res <- svm_rbf_wf %>%
 ```{r Initial Compare tuned parameters}
 svm_rbf_res %>%
   collect_metrics() %>%
+  filter(.metric == "rmse") %>%
   mutate(cost = factor(cost)) %>%
   ggplot(aes(rbf_sigma, mean, color = cost)) +
   geom_line(size = 1.5, alpha = 0.6) +
   geom_point(size = 2) +
-  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  #facet_wrap(~ .metric, scales = "free", nrow = 2) +
   scale_x_log10(labels = scales::label_number()) +
   scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
 ```
@@ -421,8 +422,10 @@ plan(cluster, workers = cl)
 
 # construct a 5x5 grid of sensible values
 # of cost and sigma to check
-svm_rbf_grid <- grid_regular(cost(range = c(18, 23), trans = identity_trans()), 
-                             rbf_sigma(range = c(0.0045, 0.007), trans = identity_trans()), levels = 15)
+# svm_rbf_grid <- grid_regular(cost(range = c(18, 23), trans = identity_trans()), 
+#                              rbf_sigma(range = c(0.0045, 0.007), trans = identity_trans()), levels = 5)
+svm_rbf_grid <- grid_regular(cost(), 
+                             rbf_sigma(), levels = 5)
 
 # 10 folds for cross validation
 folds <- vfold_cv(training, v = 5, strata = tempo)
