@@ -1,4 +1,4 @@
-### SL HW2 Test Mimmo
+### SL HW2 Test Mimmo Part 1
 
 # Library
 library(data.table)
@@ -40,20 +40,20 @@ dim(y_train)
 # Smooth the MFCC and get the image ------------------------------------------------------------
 audio_num <- 2
 audio <- matrix(X_train[2,1:6840], nrow = 171, ncol = 40) %>% scale()
-col_palette <- c("#FCFFA4FF", 
-                 "#F5DB4BFF", 
-                 "#FCAD12FF", 
-                 "#F78311FF", 
-                 "#E65D2FFF", 
+col_palette <- c("#FCFFA4FF",
+                 "#F5DB4BFF",
+                 "#FCAD12FF",
+                 "#F78311FF",
+                 "#E65D2FFF",
                  "#CB4149FF",
-                 "#A92E5EFF", 
-                 "#85216BFF", 
-                 "#60136EFF", 
-                 "#3A0963FF", 
-                 "#140B35FF", 
+                 "#A92E5EFF",
+                 "#85216BFF",
+                 "#60136EFF",
+                 "#3A0963FF",
+                 "#140B35FF",
                  "#000004FF")
 audio_smooth <- matrixSmooth(audio, passes = 2)
-image(x = 1:171, y = 1:40, z = audio, 
+image(x = 1:171, y = 1:40, z = audio,
       xlab = "Time instants", ylab = "Mel-Frequencies",
       col = col_palette)
 
@@ -68,7 +68,7 @@ freq_columns <- 6841:7011
 time_columns <- 7012:7015
 signal_columns <- 7034:7041
 
-cor(X_train[,mel_columns], y = y_train) %>% 
+cor(X_train[,mel_columns], y = y_train) %>%
   tibble("corr" = as.vector(.), "feat" = rownames(.)) %>%
   mutate("abs_corr" = abs(corr), feat) %>%
   arrange(desc(abs_corr)) %>%
@@ -114,10 +114,10 @@ dim(X_train_kpca)
 ## Kernel PCA Test for multiple kernel
 # ?kpca
 # K_pca_mat <- data.frame(matrix(ncol = 3, nrow = 100))
-# 
+#
 # #provide column names
 # colnames(K_pca_mat) <- c('rbfdot', 'polydot', 'vanilladot')# 'laplacedot', 'besseldot', 'anovadot',,  'splinedot', 'tanhdot'
-# 
+#
 # for(col in 1:ncol(K_pca_mat)){
 #   print(colnames(K_pca_mat)[col])
 #   if (colnames(K_pca_mat)[col] == 'polydot'){
@@ -129,7 +129,7 @@ dim(X_train_kpca)
 #     K_pca_mat[, colnames(K_pca_mat)[col]] <- X_kpca@eig
 #   }
 #   # else if (colnames(K_pca_mat)[col] == 'tanhdot'){
-#   #   X_kpca <- kpca(X_train,  kernel = colnames(K_pca_mat)[col], kpar = list(scale = 0.001, offset = 0.001), features=100) 
+#   #   X_kpca <- kpca(X_train,  kernel = colnames(K_pca_mat)[col], kpar = list(scale = 0.001, offset = 0.001), features=100)
 #   #   K_pca_mat[, colnames(K_pca_mat)[col]] <- X_kpca@eig
 #   # }
 #   # else if (colnames(K_pca_mat)[col] == 'laplacedot'){
@@ -153,16 +153,16 @@ dim(X_train_kpca)
 #     K_pca_mat[, colnames(K_pca_mat)[col]] <- X_kpca@eig
 #   }
 # }
-# 
+#
 # # Get the principal component vectors
 # X_pcv <- data.frame(pcv(K_pca_mat$vanilladot))
 # names(X_pcv) <- paste("Comp", 1:ncol(X_pcv), sep = ".")
 # X_pcv$tempo <- y_train
 # head(X_pcv)
 # dim(X_pcv)
-# 
+#
 # colo1 <- RColorBrewer::brewer.pal(3, "PuOr")[c(1,3)]
-# pairs(X_pcv, lower.panel = NULL, cex = .4, asp = 1, 
+# pairs(X_pcv, lower.panel = NULL, cex = .4, asp = 1,
 #       pch = 21, bg = colo1[X_pcv$tempo])
 
 
@@ -181,9 +181,9 @@ Train_pca <- bind_cols(X_pcv, X_train_kpca_2, y_train)
 dim(Train_pca)
 head(Train_pca)
 
-as.data.frame(Train_pca) |> 
-  ggplot(aes(Comp.1, Comp.3)) + 
-  geom_point(aes(colour = tempo)) + 
+as.data.frame(Train_pca) |>
+  ggplot(aes(Comp.1, Comp.3)) +
+  geom_point(aes(colour = tempo)) +
   scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 
 
@@ -249,11 +249,11 @@ svm_rbf_res %>%
 # Fit with the best parameters
 best_svm <- svm_rbf_res %>% select_best("rmse")
 svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
-svm_rbf_fit <- svm_rbf_wf_final %>% last_fit(tr_te_split) 
+svm_rbf_fit <- svm_rbf_wf_final %>% last_fit(tr_te_split)
 stopCluster(cl)
 
 # Final RMSE
-svm_rbf_fit %>% 
+svm_rbf_fit %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
   select(.estimate) %>%
@@ -266,15 +266,15 @@ final_svm_rbf
 
 library(vip)
 
-final_svm_rbf %>% 
-  extract_fit_parsnip() %>% 
+final_svm_rbf %>%
+  extract_fit_parsnip() %>%
   vip()
 
 
 # svm_rbf_fit$.predictions
 
 # Save model
-# svm_rbf_fit %>% 
-#   extract_workflow() %>% 
+# svm_rbf_fit %>%
+#   extract_workflow() %>%
 #   readr::write_rds("svm_rbf.rds")
 
