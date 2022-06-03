@@ -120,7 +120,7 @@ Exclude `id` and `tempo` columns from the dataset, and put aside the`tempo`
 
 ```{r Starting data matrix}
 # X  <- data[,-c("id", "tempo", "genre")]
-X  <- data[,-c("id", "tempo")] %>% as.matrix()
+X  <- data[,-c("id", "tempo")]
 tempo <- data$tempo
 ```
 
@@ -203,6 +203,15 @@ X_pca_mel %>%
   geom_point(aes(colour = tempo)) + 
   scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
+```{r PCA Components vs Tempo}
+tempo_scaled <- tempo / max(tempo)
+mel_scaled <- X_pca_mel$pc_mel11 / max(X_pca_mel$pc_mel3)
+
+X_pca_mel %>%
+  ggplot(aes(tempo_scaled, mel_scaled)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth()
+```
 
 ## Kernel PCA of all dominant frequencies and frequency related statistics
 
@@ -241,6 +250,16 @@ X_kpca_freq %>% plot_ly(
 )
 ```
 
+```{r KPCA Components vs Tempo}
+tempo_scaled <- tempo / max(tempo)
+freq_scaled <- X_kpca_freq$pc_freq2 / max(X_kpca_freq$pc_freq2)
+
+X_kpca_freq %>%
+  ggplot(aes(tempo_scaled, freq_scaled)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth()
+```
+
 ## Group everything in final dataset
 
 We keep everything except for the `time` columns in the original dataset
@@ -248,17 +267,31 @@ We keep everything except for the `time` columns in the original dataset
 X_red <- cbind(X_pca_mel, X_kpca_freq, genre = X[, "genre"])
 ```
 
-```{r One-hot encoding of genre}
-X_red[, paste("genre_", as.character(unique(X_red[, "genre"])), sep = "")] <- 0
-
-for (i in 1:nrow(X_red)){
-  genre <- X_red[i, "genre"]
-  X_red[i, paste("genre_", genre, sep = "")] <- 1
-}
+```{r Convert genre numbers into strings}
+X_red[, "genre"] <- X_red[, "genre"] %>% 
+  lapply(as.character) %>% 
+  unlist()
 ```
 
+<!-- ```{r One-hot encoding of genre} -->
+<!-- X_red[, paste("genre_", as.character(unique(X_red[, "genre"])), sep = "")] <- 0 -->
+
+<!-- for (i in 1:nrow(X_red)){ -->
+<!--   genre <- X_red[i, "genre"] -->
+<!--   X_red[i, paste("genre_", genre, sep = "")] <- 1 -->
+<!-- } -->
+<!-- ``` -->
+
+
+
 ```{r Final dataset}
-data_to_model <- tibble(X_red) %>% select(-genre)
+X[, "genre"] <- X[, "genre"] %>% 
+  lapply(as.character) %>% 
+  unlist()
+
+data_to_model <- X[, c(1:7011, 7016:7032, 7034:7040)] %>%
+  as.data.frame() %>%
+  tibble()
 data_to_model$tempo <- tempo
 ```
 
@@ -296,10 +329,19 @@ svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
   set_mode("regression") %>%
   set_engine("kernlab")
 
+# steps
+svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
+  step_pca(starts_with("mel"), num_comp = 20) %>%
+  step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
+                mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh, 
+                roughness,  rugo, sfm.1, shannon, simpson, renyi,
+                num_comp = 5, sigma = 0.3) %>%
+  step_dummy(genre, one_hot = T)
+
 # fitting workflow
 svm_rbf_wf <- workflow() %>%
   add_model(svm_rbf_spec) %>%
-  add_formula(tempo ~ .)
+  add_recipe(svm_rbf_rec)
 
 # parallel computing
 cl <- makeCluster(num_cores)
@@ -329,7 +371,6 @@ svm_rbf_res %>%
   ggplot(aes(rbf_sigma, mean, color = cost)) +
   geom_line(size = 1.5, alpha = 0.6) +
   geom_point(size = 2) +
-  #facet_wrap(~ .metric, scales = "free", nrow = 2) +
   scale_x_log10(labels = scales::label_number()) +
   scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
 ```
@@ -372,9 +413,23 @@ svm_rbf_fit$.predictions[[1]] %>%
   cbind(X[testing_rows, ]) %>%
   ggplot() +
     aes(tempo, .pred) +
+    geom_point(colour = "orangered", alpha = 0.3) + 
+    geom_abline(slope = 1, intercept = 0, colour = "midnightblue") +
+    scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+```{r}
+testing_rows <- svm_rbf_fit$.predictions[[1]]$.row
+
+svm_rbf_fit$.predictions[[1]] %>%
+  select(tempo, .pred, .row) %>%
+  as.data.frame() %>%
+  cbind(X[testing_rows, ]) %>%
+  ggplot() +
+    aes(tempo, .pred) +
     aes(colour = genre) +
     geom_point() + 
-    geom_smooth(alpha = 0.2) +
+    geom_abline(slope = 1, intercept = 0, colour = "midnightblue") +
     scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
 ```
 
@@ -405,16 +460,6 @@ svm_rbf_fit$.predictions[[1]] %>%
 ```{r Training for Kaggle}
 # train on full training dataset
 training <- data_to_model
-
-# model
-svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
-  set_mode("regression") %>%
-  set_engine("kernlab")
-
-# fitting workflow
-svm_rbf_wf <- workflow() %>%
-  add_model(svm_rbf_spec) %>%
-  add_formula(tempo ~ .)
 
 # parallel computing
 cl <- makeCluster(num_cores)
