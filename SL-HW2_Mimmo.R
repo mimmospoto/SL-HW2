@@ -475,10 +475,12 @@ points(rep(Xnew-.05, 2), splitConfPredict(Xnew), type="l", col="green", lwd=3)
 
 # Point 1 ------------------------------------------------------------
 ## Import model
-model_date <- "20220602_205251"
+model_date <- "20220604_164949"
 
-svm_rbf_fit <- paste("models/svm_rbf_", model_date, ".rds", sep = "") %>%
+svm_rbf_fit <- paste("models/", model_date, ".rds", sep = "") %>%
   readr::read_rds(.)
+
+svm_rbf_fit
 
 # parallel computing
 cl <- makeCluster(num_cores)
