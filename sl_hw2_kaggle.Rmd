@@ -33,20 +33,15 @@ registerDoFuture()
 
 # Modelling
 ```{r Starting data matrix}
-X <- data[,-c("id")]
-
-X[, "genre"] <- X[, "genre"] %>% 
-  lapply(as.character) %>% 
-  unlist()
-
-testing <- X[, c(1:7011, 7016:7032, 7034:7040)] %>%
-  as.data.frame() %>%
-  tibble()
+testing <- data %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
 ```
 
 ## Import model
 ```{r}
-model_date <- "20220603_185823"
+model_date <- "20220604_005940"
 
 svm_rbf_fit <- paste("models/svm_rbf_", model_date, ".rds", sep = "") %>%
   readr::read_rds(.)
@@ -54,10 +49,13 @@ svm_rbf_fit <- paste("models/svm_rbf_", model_date, ".rds", sep = "") %>%
 
 ## Export predictions
 ```{r}
-target <- svm_rbf_fit %>% predict(testing)
+target <- svm_rbf_fit %>% 
+  predict(testing) %>% 
+  select(target = .pred)
 
-final_df <- bind_cols(id = data[, "id"], target) %>%
-  select(id, target = .pred)
+final_df <- data[, "id"] %>%
+  as_tibble() %>% 
+  bind_cols(target)
 
 paste("submissions/submission_", model_date, ".csv", sep = "") %>% 
   write_csv(final_df, file = .)
