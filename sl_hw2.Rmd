@@ -109,19 +109,19 @@ Our approach for dimensionality reduction:
 - One-hot encoding of `genre`
 
 ```{r Preprocessing}
-# svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
-#   step_pca(starts_with("mel"), num_comp = 20) %>%
-#   step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
-#                 mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh, 
-#                 roughness,  rugo, sfm.1, shannon, simpson, renyi,
-#                 num_comp = 5, sigma = 0.3) %>%
-#   step_dummy(genre, one_hot = T)
-
 svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
   step_pca(starts_with("mel"), num_comp = 20) %>%
-  step_kpca_rbf(-starts_with("mel"), -genre,
+  step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
+                mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh,
+                roughness,  rugo, sfm.1, shannon, simpson, renyi,
                 num_comp = 5, sigma = 0.3) %>%
   step_dummy(genre, one_hot = T)
+
+# svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
+#   step_pca(starts_with("mel"), num_comp = 20) %>%
+#   step_kpca_rbf(-starts_with("mel"), -genre,
+#                 num_comp = 5, sigma = 0.3) %>%
+#   step_dummy(genre, one_hot = T)
 ```
 
 Define the workflow
@@ -144,6 +144,7 @@ plan(cluster, workers = cl)
 svm_rbf_grid <- grid_regular(cost(), rbf_sigma(), levels = 5)
 
 # folds for cross validation
+set.seed(123)
 folds <- vfold_cv(training, v = 5, strata = tempo)
 
 # fit for each set of folds
@@ -208,6 +209,7 @@ training <- data_to_model
 
 # recipe
 svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
+  step_normalize(starts_with("mel")) %>% 
   step_pca(starts_with("mel"), num_comp = 20) %>%
   step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
                 mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh, 
@@ -232,6 +234,7 @@ svm_rbf_grid <- grid_regular(cost(range = c(16, 23), trans = identity_trans()),
 #                              rbf_sigma(), levels = 10)
 
 # 10 folds for cross validation
+set.seed(123)
 folds <- vfold_cv(training, v = 5, strata = tempo)
 
 # fit for each set of folds
@@ -271,7 +274,7 @@ best_svm <- svm_rbf_res %>% select_best("rmse")
 
 svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
 
-svm_rbf_fit <- svm_rbf_wf_final %>% fit(training) 
+svm_rbf_fit <- svm_rbf_wf_final %>% fit(training)
 stopCluster(cl)
 ```
 
