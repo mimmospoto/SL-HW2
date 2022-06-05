@@ -1,0 +1,274 @@
+---
+title: "Trial"
+output: html_document
+---
+```{r Load libraries}
+suppressMessages(require(data.table, quietly = T))
+
+suppressMessages(require(kernlab, quietly = T))
+
+suppressMessages(require(parallel, quietly = T))
+suppressMessages(require(doFuture, quietly = T))
+
+suppressMessages(require(tidymodels, quietly = T))
+suppressMessages(require(readr, quietly = T))
+
+suppressMessages(require(RColorBrewer, quietly = T))
+suppressMessages(require(ggplot2, quietly = T))
+suppressMessages(require(plotly, quietly = T))
+```
+
+Load csv file and exclude the $m=10$ observations for `Part 2`
+
+```{r Load csv}
+data_import <- data.table::fread("/Users/domenicospoto/Desktop/Sapienza/MScDataScience/StatisticalLearning/HW2/data4final_hw/train4final_hw.csv")
+
+set.seed(123)
+obs_to_be_removed <- sample(1:nrow(data_import), 10)
+
+data <- data_import[-obs_to_be_removed ,]
+```
+
+Select only the columns we will use (all except `id`, `prec.x`, and all `time` related summaries) and thus define the starting dataset
+
+```{r}
+data_to_model <- data %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+Parallel computations
+
+```{r Parallel initialization}
+num_cores <- parallel::detectCores() - 1
+registerDoFuture()
+```
+
+# Part B
+## Point 1
+
+```{r echo=False}
+train_model <- function(train){
+  # train on half training dataset
+  # Model selection
+  svm_rbf_spec_D1 <- svm_rbf(cost = tune(), 
+                        rbf_sigma = tune()) %>%
+    set_mode("regression") %>%
+    set_engine("kernlab")
+  # recipe
+  svm_rbf_rec_D1 <- recipe(tempo ~ ., data = train) %>%
+    step_pca(starts_with("mel"), num_comp = 20) %>%
+    step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
+                  mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh,roughness,  rugo, sfm.1, shannon, simpson, renyi, num_comp = 5, sigma = 0.3) %>%
+    step_dummy(genre, one_hot = T)
+  
+  # workflow
+  svm_rbf_wf_D1 <- workflow() %>%
+    add_model(svm_rbf_spec_D1) %>%
+    add_recipe(svm_rbf_rec_D1)
+  
+  # parallel computing
+  cl <- makeCluster(num_cores)
+  plan(cluster, workers = cl)
+  
+  # construct a 5x5 grid
+  # of cost and sigma to check
+  svm_rbf_grid_D1 <- grid_regular(cost(),
+                               rbf_sigma(), levels = 5)
+  
+  # 10 folds for cross validation
+  folds <- vfold_cv(train, v = 5, strata = tempo)
+  
+  # fit for each set of folds
+  # for all parameters in the grid
+  svm_rbf_res_D1 <- svm_rbf_wf_D1 %>%
+    tune_grid(resamples = folds, grid = svm_rbf_grid_D1)
+  
+  # Final fit
+  best_svm_D1 <- svm_rbf_res_D1 %>% select_best("rmse")
+
+  svm_rbf_wf_final_D1 <- svm_rbf_wf_D1 %>% finalize_workflow(best_svm_D1)
+
+  svm_rbf_fit_D1 <- svm_rbf_wf_final_D1 %>% fit(train) 
+  stopCluster(cl)
+  return(svm_rbf_fit_D1)
+}
+```
+
+We get the $m$ observations that we early put the aside. Afterwards, we select only the relevant feature of these new observations.
+
+```{r Create Xnew}
+m <- data_import[obs_to_be_removed ,]
+Xnew <- m %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+We start implementing the Split Conformal Prediction which is divided in 5 steps:
+
+1. we randomly split the train dataset in two equal-sized subsets $(D^{(1)},D^{(2)})$ 
+
+```{r tune D1}
+set.seed(222222)
+idx <- sample(1:nrow(data_to_model), floor(nrow(data_to_model)/2))
+D1 <- data_to_model[idx,]
+D2 <- data_to_model[-idx,]
+
+
+# tr_te_split <- data_to_model %>% initial_split(prop = 0.5, strata = tempo)
+# training_D1 <- training(tr_te_split)
+# testing_D1 <- testing(tr_te_split)
+```
+
+```{r train on D1}
+svm_rbf_fit_CP <- train_model(D1)
+# svm_rbf_fit_CP <- train_model(training_D1)
+```
+
+2. we train the model on $D^{(1)}$
+
+```{r save D1, echo=FALSE}
+filename <- "/Users/domenicospoto/Desktop/Sapienza/MScDataScience/StatisticalLearning/HW2/SL-HW2/models" %>% 
+  paste('/train_D1_CP', sep='') %>% 
+  paste(".rds", sep = "")
+svm_rbf_fit_CP %>% 
+  readr::write_rds(file = filename)
+```
+
+```{r import D1, echo=FALSE}
+model_name <- "train_D1_CP"
+
+svm_rbf_fit_CP <- paste("models/", model_name, ".rds", sep = "") %>%
+  readr::read_rds(.)
+```
+
+3. we predict and evaluate on $D^{(2)}$. We also compute the absolute value of the residuals.
+
+```{r compute residuals on D2}
+resOut <- abs(D2$tempo - predict(svm_rbf_fit_CP, new_data=D2))[[1]]
+```
+
+4. we compute the $d = k^{th}$ smallest value, where $k=⌈(n/2+1)(1-\alpha⌉$.
+
+```{r}
+alpha <- 0.025
+kOut <- ceiling(((nrow(D)/2)+1)*(1-alpha))
+resUse <- resOut[order(resOut)][kOut]
+```
+
+5. we compute the $C_{split}(x) = [\hat{f}(x) - d, \hat{f}(x) + d]$ for each $x$ of the $m$ observations.
+
+```{r}
+Y.hat <- predict(svm_rbf_fit_CP, new_data=Xnew)[[1]]
+C.split <- matrix(c(Y.hat-resUse,Y.hat+resUse, m$tempo), nrow = 10, ncol = 3)
+colnames(C.split) <- c('LowerCP', 'UpperCP', 'True.response')
+```
+
+## Plot and visualize the results of alpha=0.025
+
+```{r Plot visualization of the results for m-10}
+C.split %>%
+  as_tibble() %>%
+  ggplot(aes(True.response, Y.hat))+
+  geom_abline(slope = 1, alpha = 0.3, lty=2)+
+  geom_ribbon(aes(ymin=LowerCP,ymax=UpperCP), alpha=0.08, fill='midnightblue')+
+  geom_errorbar(aes(ymin=LowerCP,ymax=UpperCP))+
+  geom_point(color='#F8766D', size=2.5)
+```
+
+The  plot above shows the predicted values agaist the true response of the 
+
+# Plot and visualize results for various alpha and width intervals
+```{r compute error rate and width int}
+alpha <- 0.1*1:10
+build_intervals <- function(alpha){
+  kOut <- ceiling(((nrow(D)/2)+1)*(1-alpha))
+  resUse <- resOut[order(resOut)][kOut]
+  Y.hat <- predict(svm_rbf_fit_CP, new_data=Xnew)[[1]]
+  C.split <- matrix(c(Y.hat-resUse,Y.hat+resUse, m$tempo), nrow = 10, ncol = 3)
+  colnames(C.split) <- c('LowerCP', 'UpperCP', 'True.response')
+  error_rate <- length(which(C.split[,'True.response'] < C.split[,'LowerCP']  | C.split[,'True.response'] > C.split[,'UpperCP']))/nrow(C.split)
+  width_interval <- mean(C.split[,'UpperCP']-C.split[,'LowerCP'])
+  return (list('C.split'=C.split, 'error_rate'=error_rate, 'width_interval'=width_interval))
+}
+
+C.values <- matrix(nrow=10,ncol=3)
+C.values[,1] <- alpha
+for (i in 1:length(alpha)){
+ out <- build_intervals(alpha[i])
+ C.values[i,2] <- out$error_rate
+ C.values[i,3] <- out$width_interval
+}
+colnames(C.values) <- c('alpha', 'error_rate', 'width_interval')
+```
+
+```{r  Error rate vs alpha}
+C.values %>%
+  as_tibble()%>%
+  ggplot(aes(alpha,error_rate))+
+  geom_point()+
+  # geom_line(aes(alpha,width_interval), lty=2)+
+  # scale_y_continuous(name = 'width interval',
+  #                    sec.axis = sec_axis(~ ./60, name='error rate'))+
+  geom_abline(slope = 1, alpha = 0.3, lty=2)+
+  ggtitle('Error rate vs. alpha')+
+  theme(plot.title = element_text(hjust=0.5))
+```
+
+
+```{r Width interval vs alpha}
+C.values %>%
+  as_tibble()%>%
+  ggplot(aes(alpha,width_interval))+
+  geom_line(lty=2)+
+  ggtitle('Width interval vs. alpha')+
+  theme(plot.title = element_text(hjust=0.5))
+
+```
+
+
+# COMMENTS !!!!
+
+# Point 2
+
+```{r}
+data_test <- data.table::fread("/Users/domenicospoto/Desktop/Sapienza/MScDataScience/StatisticalLearning/HW2/data4final_hw/test4final_hw.csv")
+
+set.seed(123)
+obs_to_be_considered <- sample(1:nrow(data_test), 100)
+data_test <- data_test[obs_to_be_considered, ]
+
+Xnew_test <- data_test %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+
+# Build C.split
+```{r}
+alpha <- 0.025
+kOut <- ceiling(((nrow(D)/2)+1)*(1-alpha))
+resUse <- resOut[order(resOut)][kOut]
+Y.hat <- predict(svm_rbf_fit_CP, new_data=Xnew_test)[[1]]
+C.split_test <- matrix(c(Y.hat-resUse,Y.hat+resUse, Y.hat), nrow = 100, ncol = 3)
+colnames(C.split_test) <- c('LowerCP', 'UpperCP', 'Y.hat')
+```
+
+# Plot and visualize the results of alpha=0.025
+```{r Plot visualization of the results for m='10'}
+C.split_test %>%
+  as_tibble() %>%
+  ggplot(aes(x=1:100))+
+  geom_ribbon(aes(ymin=LowerCP,ymax=UpperCP), alpha=0.2, fill='midnightblue')+
+  geom_line(aes(y=Y.hat))+
+  geom_point(aes(y=Y.hat),color='#F8766D', size=2)+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggtitle('Conformal bounds vs. predictions of test data', )+
+  theme(plot.title = element_text(hjust=0.5))
+```
+
