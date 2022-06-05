@@ -297,21 +297,21 @@ svm_rbf_fit %>%
 train_model <- function(train){
   # train on half training dataset
   # Model selection
-  svm_rbf_spec <- svm_rbf(cost = tune(), 
+  svm_rbf_spec_D1 <- svm_rbf(cost = tune(), 
                         rbf_sigma = tune()) %>%
     set_mode("regression") %>%
     set_engine("kernlab")
   # recipe
-  svm_rbf_rec <- recipe(tempo ~ ., data = train) %>%
+  svm_rbf_rec_D1 <- recipe(tempo ~ ., data = train) %>%
     step_pca(starts_with("mel"), num_comp = 20) %>%
     step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
                   mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh,roughness,  rugo, sfm.1, shannon, simpson, renyi, num_comp = 5, sigma = 0.3) %>%
     step_dummy(genre, one_hot = T)
   
   # workflow
-  svm_rbf_wf <- workflow() %>%
-    add_model(svm_rbf_spec) %>%
-    add_recipe(svm_rbf_rec)
+  svm_rbf_wf_D1 <- workflow() %>%
+    add_model(svm_rbf_spec_D1) %>%
+    add_recipe(svm_rbf_rec_D1)
   
   # parallel computing
   cl <- makeCluster(num_cores)
@@ -319,9 +319,7 @@ train_model <- function(train){
   
   # construct a 5x5 grid
   # of cost and sigma to check
-  # svm_rbf_grid <- grid_regular(cost(range = c(16, 23), trans = identity_trans()),
-  #                              rbf_sigma(range = c(0.04, 0.06), trans = identity_trans()), levels =   5)
-  svm_rbf_grid <- grid_regular(cost(),
+  svm_rbf_grid_D1 <- grid_regular(cost(),
                                rbf_sigma(), levels = 5)
   
   # 10 folds for cross validation
@@ -329,17 +327,17 @@ train_model <- function(train){
   
   # fit for each set of folds
   # for all parameters in the grid
-  svm_rbf_res <- svm_rbf_wf %>%
-    tune_grid(resamples = folds, grid = svm_rbf_grid)
+  svm_rbf_res_D1 <- svm_rbf_wf_D1 %>%
+    tune_grid(resamples = folds, grid = svm_rbf_grid_D1)
   
   # Final fit
-  best_svm <- svm_rbf_res %>% select_best("rmse")
+  best_svm_D1 <- svm_rbf_res_D1 %>% select_best("rmse")
 
-  svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
+  svm_rbf_wf_final_D1 <- svm_rbf_wf_D1 %>% finalize_workflow(best_svm_D1)
 
-  svm_rbf_fit <- svm_rbf_wf_final %>% fit(train) 
+  svm_rbf_fit_D1 <- svm_rbf_wf_final_D1 %>% fit(train) 
   stopCluster(cl)
-  return(svm_rbf_fit)
+  return(svm_rbf_fit_D1)
 }
 ```
 
@@ -356,17 +354,10 @@ Xnew <- m %>%
 # Tune the model on D1
 
 ```{r tune D1}
-
-set.seed(123)
-# D <- data_to_model
-# idx <- sample(1:nrow(D), floor(nrow(D)/2))
-# D1 <- D[idx,]
-# D2 <- D[-idx,]
-# svm_rbf_fit_CP <- train_model(D1)
-
-D1_D2_split <- data_to_model %>% initial_split(prop = 0.5)
-D1 <- training(D1_D2_split)
-D2 <- testing(D1_D2_split)
+set.seed(222222)
+idx <- sample(1:nrow(data_to_model), floor(nrow(data_to_model)/2))
+D1 <- data_to_model[idx,]
+D2 <- data_to_model[-idx,]
 svm_rbf_fit_CP <- train_model(D1)
 ```
 
@@ -443,15 +434,17 @@ colnames(C.values) <- c('alpha', 'error_rate', 'width_interval')
 ```{r  Error rate vs alpha}
 C.values %>%
   as_tibble()%>%
-  ggplot(aes(alpha,error_rate*60))+
-  # geom_abline(slope = 1, alpha = 0.3, lty=2)+
+  ggplot(aes(alpha,error_rate))+
   geom_point()+
-  geom_line(aes(alpha,width_interval), lty=2)+
-  scale_y_continuous(name = 'width interval',
-                     sec.axis = sec_axis(~ ./40, name='error rate'))+
+  # geom_line(aes(alpha,width_interval), lty=2)+
+  # scale_y_continuous(name = 'width interval',
+  #                    sec.axis = sec_axis(~ ./60, name='error rate'))+
+  geom_abline(slope = 1, alpha = 0.3, lty=2)+
   ggtitle('Error rate vs. alpha')+
   theme(plot.title = element_text(hjust=0.5))
 ```
+
+
 ```{r Width interval vs alpha}
 C.values %>%
   as_tibble()%>%
@@ -492,14 +485,16 @@ colnames(C.split_test) <- c('LowerCP', 'UpperCP', 'Y.hat')
 ```
 
 # Plot and visualize the results of alpha=0.025
-```{r Plot visualization of the results for m=10}
+```{r Plot visualization of the results for m='10'}
 C.split_test %>%
   as_tibble() %>%
   ggplot(aes(x=1:100))+
   geom_ribbon(aes(ymin=LowerCP,ymax=UpperCP), alpha=0.2, fill='midnightblue')+
   geom_line(aes(y=Y.hat))+
   geom_point(aes(y=Y.hat),color='#F8766D', size=2)+
-  xlab('x')+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
   ggtitle('Conformal bounds vs. predictions of test data', )+
   theme(plot.title = element_text(hjust=0.5))
 ```
