@@ -110,18 +110,13 @@ Our approach for dimensionality reduction:
 
 ```{r Preprocessing}
 svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
+  step_normalize(starts_with("mel")) %>% 
   step_pca(starts_with("mel"), num_comp = 20) %>%
   step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
                 mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh,
                 roughness,  rugo, sfm.1, shannon, simpson, renyi,
                 num_comp = 5, sigma = 0.3) %>%
   step_dummy(genre, one_hot = T)
-
-# svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
-#   step_pca(starts_with("mel"), num_comp = 20) %>%
-#   step_kpca_rbf(-starts_with("mel"), -genre,
-#                 num_comp = 5, sigma = 0.3) %>%
-#   step_dummy(genre, one_hot = T)
 ```
 
 Define the workflow
@@ -207,12 +202,11 @@ svm_rbf_fit$.predictions[[1]] %>%
 # train on full training dataset
 training <- data_to_model
 
-# recipe
 svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
-  step_normalize(starts_with("mel")) %>% 
+  step_normalize(starts_with("mel")) %>%
   step_pca(starts_with("mel"), num_comp = 20) %>%
   step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
-                mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh, 
+                mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh,
                 roughness,  rugo, sfm.1, shannon, simpson, renyi,
                 num_comp = 5, sigma = 0.3) %>%
   step_dummy(genre, one_hot = T)
@@ -228,14 +222,12 @@ plan(cluster, workers = cl)
 
 # construct a 5x5 grid
 # of cost and sigma to check
-svm_rbf_grid <- grid_regular(cost(range = c(16, 23), trans = identity_trans()),
+svm_rbf_grid <- grid_regular(cost(range = c(10, 23), trans = identity_trans()),
                              rbf_sigma(range = c(0.04, 0.06), trans = identity_trans()), levels = 5)
-# svm_rbf_grid <- grid_regular(cost(),
-#                              rbf_sigma(), levels = 10)
 
-# 10 folds for cross validation
+# folds for cross validation
 set.seed(123)
-folds <- vfold_cv(training, v = 5, strata = tempo)
+folds <- vfold_cv(training, v = 10, strata = tempo)
 
 # fit for each set of folds
 # for all parameters in the grid
@@ -259,36 +251,80 @@ svm_rbf_res %>%
 
 ### Lowest RMSE from cross validation
 
-```{r Lowest RMSE from cross validation}
-svm_rbf_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  filter(mean == min(mean)) %>%
-  select(cost, rbf_sigma, .metric, mean, std_err)
+```{r Parameters with lowest avg RMSE}
+svm_rbf_res %>% show_best("rmse")
 ```
+
 
 ### Fit with the best parameters
 
 ```{r Final fit for Kaggle}
-best_svm <- svm_rbf_res %>% select_best("rmse")
+best_svm_rmse <- svm_rbf_res %>% select_best("rmse")
+svm_rbf_fit_rmse <- svm_rbf_wf %>% 
+  finalize_workflow(best_svm_rmse) %>%
+  fit(training)
 
-svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
+best_svm_std_err <- svm_rbf_res %>% select_by_one_std_err("rmse")
+svm_rbf_fit_std_err <- svm_rbf_wf %>% 
+  finalize_workflow(best_svm_std_err) %>%
+  fit(training)
 
-svm_rbf_fit <- svm_rbf_wf_final %>% fit(training)
 stopCluster(cl)
 ```
 
-###  Save model
+###  Save models
 
 ```{r Save model for Kaggle, eval = FALSE}
 current_time <- Sys.time() %>% format("%Y%m%d_%H%M%S")
 
 filename <- "models/svm_rbf" %>% 
-  paste(current_time, sep = "_") %>% 
+  paste(current_time, "rmse", sep = "_") %>% 
   paste(".rds", sep = "")
 
-svm_rbf_fit %>% 
+svm_rbf_fit_rmse %>% 
   readr::write_rds(file = filename)
+
+filename <- "models/svm_rbf" %>% 
+  paste(current_time, "std_err", sep = "_") %>% 
+  paste(".rds", sep = "")
+
+svm_rbf_fit_std_err %>% 
+  readr::write_rds(file = filename)
+```
+
+# Export Kaggle submission
+
+### Import Test dataset
+
+```{r}
+testing_full <- data.table::fread("data/test4final_hw.csv")
+
+testing <- testing_full  %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+### Import saved model and export predictions
+
+```{r}
+model_date <- "20220605_142721"
+
+for (type in c("rmse", "std_err")){
+  svm_rbf_fit <- paste("models/svm_rbf_", model_date, "_", type, ".rds", sep = "") %>%
+    readr::read_rds(.)
+  
+  target <- svm_rbf_fit %>% 
+    predict(testing) %>% 
+    select(target = .pred)
+
+  final_df <- testing_full[, "id"] %>%
+    as_tibble() %>% 
+    bind_cols(target)
+  
+  paste("submissions/submission_", model_date, "_", type, ".csv", sep = "") %>% 
+    write_csv(final_df, file = .)
+}
 ```
 
 # Part 2
