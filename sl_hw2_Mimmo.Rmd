@@ -327,7 +327,7 @@ train_model <- function(train){
                                rbf_sigma(), levels = 5)
   
   # 10 folds for cross validation
-  folds <- vfold_cv(training, v = 5, strata = tempo)
+  folds <- vfold_cv(train, v = 5, strata = tempo)
   
   # fit for each set of folds
   # for all parameters in the grid
@@ -339,7 +339,7 @@ train_model <- function(train){
 
   svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
 
-  svm_rbf_fit <- svm_rbf_wf_final %>% fit(training) 
+  svm_rbf_fit <- svm_rbf_wf_final %>% fit(train) 
   stopCluster(cl)
   return(svm_rbf_fit)
 }
@@ -439,9 +439,12 @@ colnames(C.values) <- c('alpha', 'error_rate', 'width_interval')
 ```{r  Error rate vs alpha}
 C.values %>%
   as_tibble()%>%
-  ggplot(aes(alpha,error_rate))+
-  geom_abline(slope = 1, alpha = 0.3, lty=2)+
+  ggplot(aes(alpha,error_rate*60))+
+  # geom_abline(slope = 1, alpha = 0.3, lty=2)+
   geom_point()+
+  geom_line(aes(alpha,width_interval), lty=2)+
+  scale_y_continuous(name = 'width interval',
+                     sec.axis = sec_axis(~ ./40, name='error rate'))+
   ggtitle('Error rate vs. alpha')+
   theme(plot.title = element_text(hjust=0.5))
 ```
