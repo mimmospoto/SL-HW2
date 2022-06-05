@@ -305,9 +305,7 @@ train_model <- function(train){
   svm_rbf_rec <- recipe(tempo ~ ., data = train) %>%
     step_pca(starts_with("mel"), num_comp = 20) %>%
     step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
-                  mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh, 
-                  roughness,  rugo, sfm.1, shannon, simpson, renyi,
-                  num_comp = 5, sigma = 0.3) %>%
+                  mean, sd, sem, median, mode, Q25, Q75, IQR, cent, skewness, kurtosis, sfm, sh,roughness,  rugo, sfm.1, shannon, simpson, renyi, num_comp = 5, sigma = 0.3) %>%
     step_dummy(genre, one_hot = T)
   
   # workflow
@@ -358,11 +356,17 @@ Xnew <- m %>%
 # Tune the model on D1
 
 ```{r tune D1}
+
 set.seed(123)
-D <- data_to_model
-idx <- sample(1:nrow(D), floor(nrow(D)/2))
-D1 <- D[idx,]
-D2 <- D[-idx,]
+# D <- data_to_model
+# idx <- sample(1:nrow(D), floor(nrow(D)/2))
+# D1 <- D[idx,]
+# D2 <- D[-idx,]
+# svm_rbf_fit_CP <- train_model(D1)
+
+D1_D2_split <- data_to_model %>% initial_split(prop = 0.5)
+D1 <- training(D1_D2_split)
+D2 <- testing(D1_D2_split)
 svm_rbf_fit_CP <- train_model(D1)
 ```
 
