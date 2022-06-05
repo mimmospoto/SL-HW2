@@ -346,7 +346,7 @@ train_model <- function(train){
 ```
 
 ## Implement Split Conformal Prediction
-# Import and create Xnew
+# Import and create Xnew from the sliced m
 ```{r Create Xnew}
 m <- data_import[obs_to_be_removed ,]
 Xnew <- m %>%
@@ -366,7 +366,7 @@ D2 <- D[-idx,]
 svm_rbf_fit_CP <- train_model(D1)
 ```
 
-# Save train on D1
+# Save the model trained on D1
 
 ```{r save D1}
 filename <- "/Users/domenicospoto/Desktop/Sapienza/MScDataScience/StatisticalLearning/HW2/SL-HW2/models" %>% 
@@ -376,7 +376,17 @@ svm_rbf_fit_CP %>%
   readr::write_rds(file = filename)
 ```
 
+## Import modelt trained on D1
+
+```{r}
+model_name <- "train_D1_CP"
+
+svm_rbf_fit_CP <- paste("models/", model_name, ".rds", sep = "") %>%
+  readr::read_rds(.)
+```
+
 # Compute absolute value of Y and residuals on D2
+
 ```{r}
 resOut <- abs(D2$tempo - predict(svm_rbf_fit_CP, new_data=D2))[[1]]
 ```
@@ -392,7 +402,7 @@ colnames(C.split) <- c('LowerCP', 'UpperCP', 'True.response')
 ```
 
 # Plot and visualize the results of alpha=0.025
-```{r Plot visualization of the results for m=10}
+```{r Plot visualization of the results for m-10}
 C.split %>%
   as_tibble() %>%
   ggplot(aes(True.response, Y.hat))+
@@ -426,17 +436,22 @@ for (i in 1:length(alpha)){
 colnames(C.values) <- c('alpha', 'error_rate', 'width_interval')
 ```
 
-```{r}
+```{r  Error rate vs alpha}
 C.values %>%
   as_tibble()%>%
   ggplot(aes(alpha,error_rate))+
   geom_abline(slope = 1, alpha = 0.3, lty=2)+
   geom_point()+
-  scale_y_continuous(sec.axis = sec_axis(~ . + 10))
-
-  
-
-geom_line(aes(y=width_interval), lty=2)
+  ggtitle('Error rate vs. alpha')+
+  theme(plot.title = element_text(hjust=0.5))
+```
+```{r Width interval vs alpha}
+C.values %>%
+  as_tibble()%>%
+  ggplot(aes(alpha,width_interval))+
+  geom_line(lty=2)+
+  ggtitle('Width interval vs. alpha')+
+  theme(plot.title = element_text(hjust=0.5))
 
 ```
 
@@ -456,8 +471,6 @@ Xnew_test <- data_test %>%
   as_tibble() %>%
   select(-starts_with("time"), -id, -prec.x) %>%
   mutate(genre = as.character(genre))
-Xnew_test$genre
-
 ```
 
 
@@ -479,6 +492,8 @@ C.split_test %>%
   geom_ribbon(aes(ymin=LowerCP,ymax=UpperCP), alpha=0.2, fill='midnightblue')+
   geom_line(aes(y=Y.hat))+
   geom_point(aes(y=Y.hat),color='#F8766D', size=2)+
-  xlab('x')
+  xlab('x')+
+  ggtitle('Conformal bounds vs. predictions of test data', )+
+  theme(plot.title = element_text(hjust=0.5))
 ```
 
