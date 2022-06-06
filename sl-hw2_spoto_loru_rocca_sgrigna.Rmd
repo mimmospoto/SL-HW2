@@ -1,0 +1,638 @@
+---
+title: "Statistical Learning HW2"
+author: "G04 - Domenico Spoto, Edoardo Loru, Antonio Rocca, Alessia Sgrigna"
+date: "2022-06-05"
+output:
+  html_document:
+    highlight: kate
+    toc: yes
+    toc_float: yes
+---
+
+```{r Load libraries, include = F}
+suppressMessages(require(data.table, quietly = T))
+
+suppressMessages(require(kernlab, quietly = T))
+
+suppressMessages(require(parallel, quietly = T))
+suppressMessages(require(doFuture, quietly = T))
+
+suppressMessages(require(tidymodels, quietly = T))
+suppressMessages(require(tidytext, quietly = T))
+suppressMessages(require(readr, quietly = T))
+
+suppressMessages(require(RColorBrewer, quietly = T))
+suppressMessages(require(ggplot2, quietly = T))
+suppressMessages(require(ggforce, quietly = T))
+suppressMessages(require(gridExtra, quietly = T))
+```
+
+```{r Parallel initialization, include = F}
+num_cores <- parallel::detectCores() - 1
+registerDoFuture()
+```
+
+# Introduction
+
+Our task is to estimate the tempo -- i.e. the rate of the pulse -- of a piece of music. At our disposal we have a total of 7042 features, which can be broken down as follows:
+
+1. $6840 = 171\times40$ Mel-frequency cepstral coefficients, which are a compression of the magnitude of a signal, obtained from its spectrogram;
+
+2. $171$ dominant frequencies of the signal, one for each time instant
+
+3. $8$ summary statistics extracted from `STFT` (Short-Time Fourier Transform)
+
+4. $14$ statistical properties of the frequency spectrum
+
+5. $6$ statistical properties of the signal
+
+6. `genre` of the piece of music
+
+7. `id` of the piece of music 
+
+8. `tempo` of the piece of music (the target variable)
+
+The dataset is divided into a Training and a Testing subset, with the latter missing the `tempo` variable.
+
+We begin by loading the Training dataset, setting aside $10$ observations which we won't use to train the model and we will instead use in Part 2 of this task.
+
+```{r echo = F}
+set.seed(123)
+```
+```{r Load csv}
+data_import <- data.table::fread("data/train4final_hw.csv")
+
+obs_to_be_removed <- sample(1:nrow(data_import), 10)
+
+data <- data_import[-obs_to_be_removed ,]
+```
+
+# Part A
+
+## Feature selection
+
+To build our model we won't actually use every feature: we will exclude all time-related summary statistics (such as the time initial percentile or the time interpercentile range), the `id` column - which is a unique identifier of the observation - and frequency precision of the spectrum `prec.x`, which is the same for all observations. 
+
+```{r Feature selection}
+data_to_model <- data %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+## Model selection
+
+As a model we picked a Support Vector Machine with Radial Basis Function -- which is implemented in the `kernlab` package, of which we will tune the `rbf_sigma` of the RBF and the `cost` of the SVM with k-Fold Cross Validation, using `tidymodels` for all the pre-processing and modelling steps.
+
+```{r Model selection}
+svm_rbf_spec <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("kernlab")
+```
+
+## Exploratory Modelling
+
+### Training/Testing split
+
+Given that the Testing dataset provided to us doesn't include the target variable, in order to better assess our choices and not rely solely on Kaggle -- thus risking to overfit the Public LB -- we decided to split the observations in the Training dataset in a 70% reserved for training/validation and a 30% for testing, using stratified sampling. 
+
+```{r echo = F}
+set.seed(123)
+pca_num_comp  <- 20
+kpca_num_comp <- 5
+```
+```{r Training/testing split}
+tr_te_split <- data_to_model %>% 
+  initial_split(prop = 0.7, strata = tempo)
+
+training <- training(tr_te_split)
+testing  <- testing(tr_te_split)
+```
+
+### Pre-processing
+
+Considering the number of features, some dimensionality reduction was necessary. The following is the approach that worked best for us
+
+- Linear PCA on all MEL coefficients (first centered and scaled), taking the first `r pca_num_comp` components
+- Kernel PCA with RBF for all frequency and signal related features (first centered and scaled), taking the first `r kpca_num_comp` components
+- One-hot encoding of `genre`
+
+which condensed the total number of predictors from over $7000$ down to `r pca_num_comp + kpca_num_comp + nrow(unique(data_to_model[, "genre"]))`.
+
+```{r Preprocessing}
+svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
+  step_normalize(starts_with("mel")) %>% 
+  step_pca(starts_with("mel"), num_comp = pca_num_comp) %>%
+  step_normalize(starts_with("domfr"), starts_with("freq"),
+                mean, sd, sem, median, mode, Q25, Q75, IQR, cent, 
+                skewness, kurtosis, sfm, sh, roughness,  
+                rugo, sfm.1, shannon, simpson, renyi) %>% 
+  step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
+                mean, sd, sem, median, mode, Q25, Q75, IQR, cent, 
+                skewness, kurtosis, sfm, sh, roughness,  
+                rugo, sfm.1, shannon, simpson, renyi, 
+                num_comp = kpca_num_comp, sigma = 0.3) %>%
+  step_dummy(genre, one_hot = T)
+```
+
+This dimensionality reduction allowed us to obtain some *mild* separation between the observations with respect to their `tempo`
+
+```{r, echo = F}
+prep_data <- svm_rbf_rec %>% prep()
+```
+```{r PCA components, echo = F}
+prep_data %>%
+  juice() %>% 
+  select(PC01, PC02, PC03, PC04, tempo) %>%
+  ggplot() +
+  aes(colour = tempo) +
+  geom_autopoint(alpha = 0.6, size = 0.1) +
+  geom_autodensity(alpha = .3) +
+  facet_matrix(vars(-tempo), layer.diag = 2) +
+  labs(title = "Linear PCA on the MEL coefficients", subtitle = "Components against tempo") +
+  scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+```{r kPCA components, echo = F}
+prep_data %>%
+  juice() %>% 
+  select(kPC1, kPC2, kPC3, kPC4, tempo) %>%
+  ggplot() +
+  aes(colour = tempo) +
+  geom_autopoint(alpha = 0.8, size = 0.2) +
+  geom_autodensity(alpha = .3) +
+  facet_matrix(vars(-tempo), layer.diag = 2) +
+  labs(title = "Kernel PCA on frequency-related features", subtitle = "Components against tempo") +
+  scale_colour_gradientn(colours = RColorBrewer::brewer.pal(4, "RdYlBu"))
+```
+
+As the plots above show, "high" tempos (above 160) and "middle" tempos (between 110 and 160) are well separated, whereas "low" tempos (below 110) are mixed in between the other two; we will see later that this lack of separation strongly impacts the goodness of our predictions for low tempos.
+
+### Tuning
+
+In order to tune the model we perform a grid search over 25 pairs of `cost` and `rbf_sigma`, using the default *sensible* values just to form an idea of the goodness of our pre-processing, and by looking at the average `RMSE` of each pair through k-fold Cross Validation with $k=5$.
+
+```{r Tuning on 70% Training}
+# training workflow
+svm_rbf_wf <- workflow() %>%
+  add_model(svm_rbf_spec) %>%
+  add_recipe(svm_rbf_rec)
+
+# parallel computations
+cl <- makeCluster(num_cores)
+plan(cluster, workers = cl)
+
+# grid of values of cost and sigma to check
+svm_rbf_grid <- grid_regular(cost(), rbf_sigma(), levels = 5)
+
+# folds for cross validation
+set.seed(123)
+folds <- vfold_cv(training, v = 5, strata = tempo)
+
+# fit for each set of folds
+# for all parameters in the grid
+svm_rbf_res <- svm_rbf_wf %>%
+  tune_grid(resamples = folds, grid = svm_rbf_grid)
+```
+
+```{r Compare tuned parameters on 70% training, echo = F}
+toplot <- svm_rbf_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(cost = factor(cost))
+```
+
+```{r echo = F}
+toplot %>% 
+  ggplot(aes(rbf_sigma, mean, color = cost)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0) +
+  labs(title = "Average RMSE for each set of parameters") +
+  ylab("RMSE") +
+  theme(plot.title = element_text(hjust=0.5))
+```
+
+We can now fit using the `rbf_sigma` and `cost` which resulted in the lowest average `RMSE`, and compare the observed tempos against our model's predictions.
+
+```{r Best 70-30 Fit}
+best_svm <- svm_rbf_res %>% select_best("rmse")
+
+svm_rbf_wf_final <- svm_rbf_wf %>% finalize_workflow(best_svm)
+
+svm_rbf_fit <- svm_rbf_wf_final %>% last_fit(tr_te_split) 
+stopCluster(cl)
+```
+
+```{r Predictions vs tempo, echo = F}
+best_rmse <- svm_rbf_fit %>% 
+  collect_metrics() %>% 
+  filter(.metric == "rmse") %>%
+  select(.estimate) %>%
+  deframe
+
+cost <- best_svm %>% select(cost) %>% deframe
+rbf_sigma <- best_svm %>% select(rbf_sigma) %>% deframe
+
+testing_rows <- svm_rbf_fit$.predictions[[1]]$.row
+```
+
+```{r echo = F}
+svm_rbf_fit$.predictions[[1]] %>%
+  ggplot() +
+    aes(tempo, .pred) +
+    geom_point(colour = "orangered", alpha = 0.3) + 
+    geom_abline(slope = 1, intercept = 0, colour = "midnightblue") +
+    labs(title = "Predictions vs Observations",
+         subtitle = paste("RMSE =", round(best_rmse, 2), "\ncost =", cost, "\nrbf_sigma =", round(rbf_sigma, 4))) +
+    xlab("Observed tempo") +
+    ylab("Predicted tempo")
+```
+
+This plot shows us that the model doesn't perform well when the tempo is approximately below 110. The main reason we believe this might be is that in music two pulses can be considered equal when one is a multiple of the other, and so even though the model is not predicting the actual tempo it may be "sensing" its double; this significantly influences the `RMSE`. However, we are also confident that our pre-processing has room for improvement, because it hasn't created a great enough separation between low tempos (below 110) and the rest, as we observed earlier by plotting the principal components.
+
+## Final Modelling (for Kaggle)
+
+Having finalized our choices for the pre-processing, we can now use the whole Training set to train our model, using 10 folds for Cross Validation and by making a more accurate grid search.
+
+**Remark**: the following results do not correspond to our best submission on the Public LB on Kaggle, which was obtained by **not** normalizing the features we then reduced with kPCA. In fact, we have noticed that the lowest average `RMSE` we would get this way was marginally lower (about 0.5) than the one obtained by normalizing before reducing. We are not sure on why this might be and it definitely wasn't expected, so given that the Kaggle competition was only a side task, we decided to use the "best" results for the Final Score but to keep the "more correct" results on this report.
+
+```{r Training for Kaggle, echo = F}
+# train on full training dataset
+training <- data_to_model
+
+svm_rbf_rec <- recipe(tempo ~ ., data = training) %>%
+  step_normalize(starts_with("mel")) %>%
+  step_pca(starts_with("mel"), num_comp = 20) %>%
+  step_normalize(starts_with("domfr"), starts_with("freq"),
+              mean, sd, sem, median, mode, Q25, Q75, IQR, cent, 
+              skewness, kurtosis, sfm, sh, roughness,  
+              rugo, sfm.1, shannon, simpson, renyi) %>% # ignore this step to get the Kaggle score
+  step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
+                mean, sd, sem, median, mode, Q25, Q75, IQR, cent, 
+                skewness, kurtosis, sfm, sh, roughness,  
+                rugo, sfm.1, shannon, simpson, renyi,
+                num_comp = 5, sigma = 0.3) %>%
+  step_dummy(genre, one_hot = T)
+
+# workflow
+svm_rbf_wf <- workflow() %>%
+  add_model(svm_rbf_spec) %>%
+  add_recipe(svm_rbf_rec)
+
+# parallel computing
+cl <- makeCluster(num_cores)
+plan(cluster, workers = cl)
+
+# construct a 5x5 grid
+# of cost and sigma to check
+svm_rbf_grid <- grid_regular(cost(range = c(15, 26), 
+                                  trans = identity_trans()),
+                             rbf_sigma(range = c(0.03, 0.05), 
+                                       trans = identity_trans()), 
+                             levels = 5)
+
+# use this grid instead to get the Kaggle score
+# svm_rbf_grid <- grid_regular(cost(range = c(10, 23), 
+#                                   trans = identity_trans()),
+#                              rbf_sigma(range = c(0.04, 0.06), 
+#                                        trans = identity_trans()), 
+#                              levels = 5)
+
+
+
+# folds for cross validation
+set.seed(123)
+folds <- vfold_cv(training, v = 10, strata = tempo)
+
+# fit for each set of folds
+# for all parameters in the grid
+svm_rbf_res <- svm_rbf_wf %>%
+  tune_grid(resamples = folds, grid = svm_rbf_grid)
+```
+
+```{r Compare tuned parameters for Kaggle, echo = F}
+best_rmse <- svm_rbf_res %>% 
+  show_best("rmse") %>% 
+  select(mean) %>%
+  filter(mean == min(mean)) %>%  
+  deframe
+
+cost <- svm_rbf_res %>%
+  show_best("rmse") %>%
+  filter(mean == min(mean)) %>%
+  select(cost) %>%
+  deframe
+
+rbf_sigma <- svm_rbf_res %>%
+  show_best("rmse") %>%
+  filter(mean == min(mean)) %>%
+  select(rbf_sigma) %>%
+  deframe
+
+toplot <- svm_rbf_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(cost = factor(cost))
+```
+
+```{r echo = F}
+toplot %>% 
+  ggplot(aes(rbf_sigma, mean, color = cost)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0) +
+  labs(title = "Average RMSE for each set of parameters",
+         subtitle = paste("Lowest RMSE =", round(best_rmse, 2), "\nBest cost =", cost, "\nBest rbf_sigma =", round(rbf_sigma, 4))) +
+  ylab("RMSE")
+```
+
+```{r Final fit for Kaggle, echo = F, warning = F}
+best_svm_rmse <- svm_rbf_res %>% select_best("rmse")
+svm_rbf_fit_rmse <- svm_rbf_wf %>% 
+  finalize_workflow(best_svm_rmse) %>%
+  fit(training)
+
+best_svm_std_err <- svm_rbf_res %>% select_by_one_std_err("rmse")
+svm_rbf_fit_std_err <- svm_rbf_wf %>% 
+  finalize_workflow(best_svm_std_err) %>%
+  fit(training)
+
+stopCluster(cl)
+```
+
+```{r Save model for Kaggle, echo = F, eval = F}
+current_time <- Sys.time() %>% format("%Y%m%d_%H%M%S")
+
+filename <- "models/svm_rbf" %>% 
+  paste(current_time, "rmse", sep = "_") %>% 
+  paste(".rds", sep = "")
+
+svm_rbf_fit_rmse %>% 
+  readr::write_rds(file = filename)
+
+filename <- "models/svm_rbf" %>% 
+  paste(current_time, "std_err", sep = "_") %>% 
+  paste(".rds", sep = "")
+
+svm_rbf_fit_std_err %>% 
+  readr::write_rds(file = filename)
+```
+
+```{r Import testing dataset, echo = F, eval = F}
+testing_full <- data.table::fread("data/test4final_hw.csv")
+
+testing <- testing_full  %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+
+```{r Export predictions, echo = F, eval = F}
+model_date <- "20220605_192150"
+
+for (type in c("rmse", "std_err")){
+  svm_rbf_fit <- paste("models/svm_rbf_", model_date, "_", type, ".rds", sep = "") %>%
+    readr::read_rds(.)
+  
+  target <- svm_rbf_fit %>% 
+    predict(testing) %>% 
+    select(target = .pred)
+
+  final_df <- testing_full[, "id"] %>%
+    as_tibble() %>% 
+    bind_cols(target)
+  
+  paste("submissions/submission_", model_date, "_", type, ".csv", sep = "") %>% 
+    write_csv(final_df, file = .)
+}
+```
+
+# Part B
+## Point 1
+
+```{r Wrapper function to train model, echo = F}
+train_model <- function(train){
+  
+  # Model selection
+  svm_rbf_spec_D1 <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+    set_mode("regression") %>%
+    set_engine("kernlab")
+  
+  # recipe
+  svm_rbf_rec_D1 <- recipe(tempo ~ ., data = train) %>%
+    step_normalize(starts_with("mel")) %>% 
+    step_pca(starts_with("mel"), num_comp = pca_num_comp) %>%
+    step_normalize(starts_with("domfr"), starts_with("freq"),
+                  mean, sd, sem, median, mode, Q25, Q75, IQR, cent, 
+                  skewness, kurtosis, sfm, sh, roughness,  
+                  rugo, sfm.1, shannon, simpson, renyi) %>% 
+    step_kpca_rbf(starts_with("domfr"), starts_with("freq"),
+                  mean, sd, sem, median, mode, Q25, Q75, IQR, cent, 
+                  skewness, kurtosis, sfm, sh, roughness,  
+                  rugo, sfm.1, shannon, simpson, renyi, 
+                  num_comp = kpca_num_comp, sigma = 0.3) %>%
+    step_dummy(genre, one_hot = T)
+  
+  # workflow
+  svm_rbf_wf_D1 <- workflow() %>%
+    add_model(svm_rbf_spec_D1) %>%
+    add_recipe(svm_rbf_rec_D1)
+  
+  # parallel computing
+  cl <- makeCluster(num_cores)
+  plan(cluster, workers = cl)
+  
+  # construct a 5x5 grid
+  # of cost and sigma to check
+  svm_rbf_grid_D1 <- grid_regular(cost(), rbf_sigma(), levels = 5)
+  
+  # 10 folds for cross validation
+  folds <- vfold_cv(train, v = 5, strata = tempo)
+  
+  # fit for each set of folds
+  # for all parameters in the grid
+  svm_rbf_res_D1 <- svm_rbf_wf_D1 %>%
+    tune_grid(resamples = folds, grid = svm_rbf_grid_D1)
+  
+  # Final fit
+  best_svm_D1 <- svm_rbf_res_D1 %>% select_best("rmse")
+  svm_rbf_wf_final_D1 <- svm_rbf_wf_D1 %>% finalize_workflow(best_svm_D1)
+  svm_rbf_fit_D1 <- svm_rbf_wf_final_D1 %>% fit(train) 
+  
+  stopCluster(cl)
+  
+  return(svm_rbf_fit_D1)
+}
+```
+
+We start by getting the $m$ observations that we put aside earlier; then, we select only the features we used in Part 1
+
+```{r Observations}
+Xnew <- data_import[obs_to_be_removed ,] %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+The Split Conformal Prediction is used to provide a confidence set to a prediction. The algorithm consists of 5 steps:
+
+1. randomly split the Training dataset in two equal-sized subsets $D^{(1)}$ and $D^{(2)}$ 
+
+```{r Split into D1 and D2}
+set.seed(222222)
+D <- data_to_model
+idx <- sample(1:nrow(D), floor(nrow(D)/2))
+
+D1 <- D[idx,]
+D2 <- D[-idx,]
+```
+
+2. train the model on $D^{(1)}$
+
+```{r Train on D1}
+svm_rbf_fit_CP <- train_model(D1)
+```
+
+3. predict and evaluate on $D^{(2)}$, and compute the absolute value of the residuals
+
+```{r Compute residuals on D2}
+resOut <- abs(D2$tempo - predict(svm_rbf_fit_CP, new_data = D2))[[1]]
+```
+
+4) compute the $d = k^{\text{th}}$ smallest value, where $k=⌈(n/2+1)(1-\alpha)⌉$ and $\alpha \in (0,1)$ is the miscoverage level
+
+```{r Find kth smallest value}
+alpha <- 0.025
+kOut <- ceiling( ((nrow(D)/2)+1)*(1-alpha) )
+resUse <- resOut[order(resOut)][kOut]
+```
+
+5) compute the $C_{\text{split}}(x) = \big[\hat{f}(x) - d, \hat{f}(x) + d\big]$ for each of the observations.
+
+```{r Compute the prediction bands}
+Y.hat <- predict(svm_rbf_fit_CP, new_data = Xnew)[[1]]
+C.split <- matrix(c(Y.hat - resUse, Y.hat + resUse, Xnew$tempo), nrow = 10, ncol = 3)
+colnames(C.split) <- c('LowerCP', 'UpperCP', 'True.response')
+```
+
+Let's compute the prediction bands for each of the $m=10$ observations for $\alpha =$ `r alpha`
+
+```{r Visualization of the prediction bands, echo = F}
+C.split %>%
+  as_tibble() %>%
+  ggplot(aes(True.response, Y.hat))+
+  geom_abline(slope = 1, alpha = 0.3, lty=2)+
+  geom_errorbar(aes(ymin=LowerCP,ymax=UpperCP))+
+  geom_point(color='#F8766D', size=2.5) +
+  labs(title = paste("Prediction bands for alpha =", alpha)) +
+  xlab("Observed tempo") +
+  ylab("Predicted tempo") +
+  theme(plot.title = element_text(hjust=0.5))
+```
+
+We can now plot the error rates (the frequency of an observation not being included in its prediction band) and the average band widths, expecting the former to increase linearly with the miscoverage level $\alpha$ and the latter to decrease and get closer to 0 as $\alpha$ increases.
+
+```{r compute error rate and width int, echo = F}
+alpha <- 0.1 * 1:9
+
+build_intervals <- function(alpha){
+  
+  kOut <- ceiling( ((nrow(D)/2) + 1) * (1 - alpha) )
+  resUse <- resOut[order(resOut)][kOut]
+  Y.hat <- predict(svm_rbf_fit_CP, new_data = Xnew)[[1]]
+  
+  C.split <- matrix(c(Y.hat - resUse, Y.hat + resUse, Xnew$tempo), 
+                    nrow = 10, ncol = 3)
+  colnames(C.split) <- c('LowerCP', 'UpperCP', 'True.response')
+  
+  error_rate <- length(which(C.split[,'True.response'] < C.split[,'LowerCP']  | C.split[,'True.response'] > C.split[,'UpperCP']))/nrow(C.split)
+  
+  width_interval <- mean(C.split[,'UpperCP']-C.split[,'LowerCP'])
+  
+  return (list('C.split' = C.split, 
+               'error_rate' = error_rate, 
+               'width_interval' = width_interval))
+}
+
+C.values <- matrix(nrow = length(alpha), ncol=3)
+C.values[,1] <- alpha
+
+for (i in 1:length(alpha)){
+  out <- build_intervals(alpha[i])
+  C.values[i,2] <- out$error_rate
+  C.values[i,3] <- out$width_interval
+}
+
+colnames(C.values) <- c('alpha', 'error_rate', 'width_interval')
+```
+
+```{r Error rate vs alpha, echo = F}
+plot_error <- C.values %>%
+  as_tibble() %>%
+  ggplot(aes(alpha,error_rate)) +
+  geom_point(size = 2, color = "#F8766D") +
+  geom_abline(slope = 1, alpha = 0.3, lty=2)+
+  ggtitle(expression(paste("Error rate vs. ", alpha))) +
+  theme(plot.title = element_text(hjust=0.5)) +
+  xlab(expression(alpha)) +
+  ylab("Error rate")
+
+plot_width <- C.values %>%
+  as_tibble() %>%
+  ggplot(aes(alpha,width_interval)) +
+  geom_line(lty=2) +
+  geom_point(size = 2, color = "#F8766D") +
+  ggtitle(expression(paste("Prediction band width vs. ", alpha))) +
+  theme(plot.title = element_text(hjust=0.5)) +
+  xlab(expression(alpha)) +
+  ylab("Band width")
+
+grid.arrange(plot_error, plot_width, ncol = 2)
+```
+
+## Point 2
+
+We now want to compute the prediction bands on 100 random observations sampled from the Testing dataset.
+```{r echo = F}
+data_test <- data.table::fread("data/test4final_hw.csv")
+
+set.seed(123)
+obs_to_be_considered <- sample(1:nrow(data_test), 100)
+
+Xnew_test <- data_test[obs_to_be_considered, ] %>%
+  as_tibble() %>%
+  select(-starts_with("time"), -id, -prec.x) %>%
+  mutate(genre = as.character(genre))
+```
+
+```{r echo = F}
+alpha <- 0.025
+
+kOut <- ceiling( (( nrow(D)/2 ) + 1) * (1 - alpha) )
+resOut <- abs(D2$tempo - predict(svm_rbf_fit_CP, new_data = D2))[[1]]
+resUse <- resOut[order(resOut)][kOut]
+
+Y.hat <- predict(svm_rbf_fit_CP, new_data = Xnew_test)[[1]]
+
+C.split_test <- matrix(c(Y.hat - resUse, Y.hat + resUse, Y.hat), 
+                       nrow = length(obs_to_be_considered), ncol = 3)
+colnames(C.split_test) <- c('LowerCP', 'UpperCP', 'Y.hat')
+```
+
+```{r Visualization of the prediction bands for Testing, echo = F}
+C.split_test %>%
+  as_tibble() %>%
+  ggplot(aes(x=1:100))+
+  geom_errorbar(aes(ymin=LowerCP, ymax=UpperCP), alpha=0.4)+
+  geom_point(aes(y=Y.hat),color='#F8766D', size=2)+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggtitle('Conformal bounds for Testing data', )+
+  theme(plot.title = element_text(hjust=0.5)) +
+  ylab("Predicted tempo")
+```
